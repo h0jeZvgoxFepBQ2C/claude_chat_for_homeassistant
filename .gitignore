@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+venv/
+.idea/
+.vscode/
+*.egg-info/
+
+# Local Claude Code project settings — not for distribution
+.claude/
+
+# Dev HA config volume — keep only what we ship
+dev/config/*
+!dev/config/configuration.yaml
+
+# pytest / tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Anything that could leak secrets
+*.env
+.env
+secrets.yaml
+*.pem
+*.key

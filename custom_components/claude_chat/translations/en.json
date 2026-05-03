@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Claude Chat",
+        "description": "Enter your Anthropic API key. Get one at console.anthropic.com.",
+        "data": {
+          "api_key": "API key",
+          "model": "Model"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid API key",
+      "cannot_connect": "Could not reach the Anthropic API"
+    },
+    "abort": {
+      "single_instance_allowed": "Claude Chat is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Claude Chat options",
+        "data": {
+          "model": "Model"
+        }
+      }
+    }
+  }
+}

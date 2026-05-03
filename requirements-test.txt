@@ -1,0 +1,9 @@
+# Test dependencies for the claude_chat integration.
+# pytest-homeassistant-custom-component pulls in the matching homeassistant
+# core release as a dependency, so a fresh `pip install -r requirements-test.txt`
+# gives you a working test harness.
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-homeassistant-custom-component>=0.13.184
+anthropic>=0.40.0
+ruff>=0.6.0

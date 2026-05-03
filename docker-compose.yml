@@ -1,0 +1,14 @@
+services:
+  homeassistant:
+    container_name: claude_chat_ha_dev
+    image: ghcr.io/home-assistant/home-assistant:stable
+    restart: unless-stopped
+    volumes:
+      - ./dev/config:/config
+      # Bind-mount the integration on top of the config volume so edits on
+      # the host are picked up after a HA restart (no copy step needed).
+      - ./custom_components/claude_chat:/config/custom_components/claude_chat
+    ports:
+      - "8123:8123"
+    environment:
+      - TZ=Europe/Vienna

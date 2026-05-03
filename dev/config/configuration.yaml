@@ -1,0 +1,65 @@
+# Dev-only HA config for testing claude_chat. NOT for production.
+
+default_config:
+
+# These three lines mirror what HA writes into a fresh installation's
+# configuration.yaml. Without `automation: !include automations.yaml`,
+# automations written by claude_chat won't be picked up after `automation.reload`.
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+http:
+  use_x_forwarded_for: true
+  # Trust everything — this is a dev container on localhost.
+  trusted_proxies:
+    - 0.0.0.0/0
+    - ::/0
+  ip_ban_enabled: false
+  login_attempts_threshold: -1
+
+homeassistant:
+  auth_providers:
+    # After one-time onboarding (first user creation), the trusted_networks
+    # provider auto-logs the single dev user in on every visit, so you go
+    # straight to the dashboard.
+    - type: trusted_networks
+      trusted_networks:
+        - 0.0.0.0/0
+        - ::/0
+      allow_bypass_login: true
+    - type: homeassistant
+
+logger:
+  default: warning
+  logs:
+    custom_components.claude_chat: debug
+
+# A handful of demo entities so Claude has something to play with.
+template:
+  - sensor:
+      - name: "Living Room Temperature"
+        unique_id: living_room_temperature
+        unit_of_measurement: "°C"
+        state: "21.4"
+      - name: "Bedroom Temperature"
+        unique_id: bedroom_temperature
+        unit_of_measurement: "°C"
+        state: "19.2"
+      - name: "Outside Temperature"
+        unique_id: outside_temperature
+        unit_of_measurement: "°C"
+        state: "8.7"
+      - name: "Living Room Humidity"
+        unique_id: living_room_humidity
+        unit_of_measurement: "%"
+        state: "47"
+  - binary_sensor:
+      - name: "Front Door"
+        unique_id: front_door
+        state: "off"
+        device_class: door
+      - name: "Motion Hall"
+        unique_id: motion_hall
+        state: "off"
+        device_class: motion
