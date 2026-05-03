@@ -3,6 +3,8 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
 > ⚠ **Alpha — usable, feedback welcome.** This is a new integration; please run it on a non-critical instance for now and open issues for anything unexpected. End-to-end flows are covered by tests and live verification, but it hasn't yet had time to soak in the community.
+>
+> *Unofficial community integration. Not affiliated with or endorsed by Anthropic. "Claude" is a trademark of Anthropic, used here descriptively to identify the supported model.*
 
 A sidebar chat panel powered by Anthropic's Claude. Ask Claude to inspect your Home Assistant or build dashboard widgets in plain English. Every dashboard edit is staged and shown as a diff so you can approve or reject before anything is saved.
 
