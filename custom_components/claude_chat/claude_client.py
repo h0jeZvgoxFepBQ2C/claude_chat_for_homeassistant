@@ -53,9 +53,9 @@ EventEmitter = Callable[[EventType], Awaitable[None]]
 
 
 AVAILABLE_MODELS = [
-    {"id": "claude-haiku-4-5-20251001", "name": "Haiku 4.5 (fastest)"},
-    {"id": "claude-sonnet-4-6", "name": "Sonnet 4.6 (balanced)"},
-    {"id": "claude-opus-4-7", "name": "Opus 4.7 (smartest)"},
+    {"id": "claude-haiku-4-5-20251001", "name": "Haiku 4.5"},
+    {"id": "claude-sonnet-4-6", "name": "Sonnet 4.6"},
+    {"id": "claude-opus-4-7", "name": "Opus 4.7"},
 ]
 
 

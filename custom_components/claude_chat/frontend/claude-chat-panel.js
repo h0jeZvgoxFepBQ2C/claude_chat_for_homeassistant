@@ -23,6 +23,24 @@ const STYLES = `
     flex-direction: column;
     background: var(--card-background-color);
     flex-shrink: 0;
+    z-index: 2;
+  }
+  .sidebar-backdrop {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1;
+  }
+  .menu-toggle {
+    display: none;
+    background: transparent;
+    border: none;
+    color: inherit;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 22px;
+    line-height: 1;
   }
   .sidebar header {
     padding: 12px 16px;
@@ -357,6 +375,37 @@ const STYLES = `
     border-radius: 3px;
     font-family: var(--code-font-family, monospace);
   }
+
+  /* ===== Mobile / narrow viewport ===== */
+  @media (max-width: 720px) {
+    :host { position: relative; overflow: hidden; }
+    .menu-toggle { display: inline-block; }
+    .sidebar {
+      position: absolute;
+      top: 0; bottom: 0; left: 0;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+      box-shadow: 2px 0 12px rgba(0,0,0,0.3);
+    }
+    :host([data-sidebar-open]) .sidebar { transform: translateX(0); }
+    :host([data-sidebar-open]) .sidebar-backdrop { display: block; }
+    .chat-header { padding: 10px 14px; gap: 8px; }
+    .chat-header h1 { font-size: 15px; }
+    .model-picker { font-size: 12px; padding: 5px 6px; max-width: 130px; }
+    .messages { padding: 14px; gap: 12px; }
+    .message { max-width: 92%; padding: 10px 14px; }
+    .tool-call { max-width: 100%; }
+    .pending-card { padding: 12px; }
+    .pending-card .actions { flex-wrap: wrap; }
+    .composer { padding: 10px 14px; gap: 6px; }
+    .composer textarea { font-size: 16px; /* prevent iOS zoom */ }
+    .composer button.send,
+    .composer button.stop { padding: 0 14px; min-width: 0; }
+    .empty-state { padding: 0 12px; }
+    .empty-state .examples { gap: 6px; }
+    .empty-state .example { font-size: 13px; padding: 8px 10px; }
+    .hint-banner { padding: 8px 14px; font-size: 12px; }
+  }
 `;
 
 class ClaudeChatPanel extends HTMLElement {
@@ -461,6 +510,8 @@ class ClaudeChatPanel extends HTMLElement {
     this._renderSidebar();
     this._renderHeader();
     this._renderChat();
+    this._restoreDraft();
+    this._closeSidebar();
   }
 
   async _approveChange(changeId) {
@@ -492,6 +543,7 @@ class ClaudeChatPanel extends HTMLElement {
     if (!this._activeSessionId) await this._createSession();
 
     if (!textOverride) textarea.value = "";
+    this._clearDraft();
     this._isStreaming = true;
     this._currentStreamingText = "";
     this._streamingToolCalls = {};
@@ -667,6 +719,7 @@ class ClaudeChatPanel extends HTMLElement {
   _render() {
     this.shadowRoot.innerHTML = `
       <style>${STYLES}</style>
+      <div class="sidebar-backdrop"></div>
       <aside class="sidebar">
         <header>
           <h2>Sessions</h2>
@@ -676,6 +729,7 @@ class ClaudeChatPanel extends HTMLElement {
       </aside>
       <section class="main">
         <div class="chat-header">
+          <button class="menu-toggle" aria-label="Toggle sessions">☰</button>
           <h1 id="chat-title">Claude Chat</h1>
           <select class="model-picker" id="model-picker"></select>
         </div>
@@ -691,25 +745,66 @@ class ClaudeChatPanel extends HTMLElement {
         </div>
       </section>
     `;
-    this.shadowRoot.querySelector("#new-chat").addEventListener("click", () =>
-      this._createSession()
-    );
+    this.shadowRoot.querySelector("#new-chat").addEventListener("click", () => {
+      this._createSession();
+      this._closeSidebar();
+    });
     this.shadowRoot.querySelector(".composer .send").addEventListener("click", () =>
       this._sendMessage()
     );
     this.shadowRoot.querySelector(".composer .stop").addEventListener("click", () =>
       this._stop()
     );
-    this.shadowRoot.querySelector("textarea").addEventListener("keydown", (e) => {
+    const ta = this.shadowRoot.querySelector("textarea");
+    ta.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         this._sendMessage();
       }
     });
+    ta.addEventListener("input", () => this._saveDraft(ta.value));
     this.shadowRoot.querySelector("#model-picker").addEventListener("change", (e) => {
       this._selectedModel = e.target.value;
       localStorage.setItem("claude_chat:model", this._selectedModel);
     });
+    this.shadowRoot.querySelector(".menu-toggle").addEventListener("click", () =>
+      this._toggleSidebar()
+    );
+    this.shadowRoot.querySelector(".sidebar-backdrop").addEventListener("click", () =>
+      this._closeSidebar()
+    );
+  }
+
+  _toggleSidebar() {
+    if (this.hasAttribute("data-sidebar-open")) this.removeAttribute("data-sidebar-open");
+    else this.setAttribute("data-sidebar-open", "");
+  }
+  _closeSidebar() {
+    this.removeAttribute("data-sidebar-open");
+  }
+
+  _draftKey(sessionId) {
+    return `claude_chat:draft:${sessionId || "new"}`;
+  }
+  _saveDraft(text) {
+    try {
+      const key = this._draftKey(this._activeSessionId);
+      if (text) localStorage.setItem(key, text);
+      else localStorage.removeItem(key);
+    } catch (_) {}
+  }
+  _restoreDraft() {
+    try {
+      const ta = this.shadowRoot.querySelector("textarea");
+      if (!ta) return;
+      const text = localStorage.getItem(this._draftKey(this._activeSessionId)) || "";
+      ta.value = text;
+    } catch (_) {}
+  }
+  _clearDraft() {
+    try {
+      localStorage.removeItem(this._draftKey(this._activeSessionId));
+    } catch (_) {}
   }
 
   _renderHintBanner() {
