@@ -318,6 +318,20 @@ const STYLES = `
     border-radius: 6px;
     cursor: pointer;
   }
+  .pending-card.superseded {
+    border-color: var(--divider-color);
+    opacity: 0.6;
+  }
+  .pending-card.superseded h3 {
+    color: var(--secondary-text-color);
+  }
+  .pending-card.superseded .actions { display: none; }
+  .pending-card .superseded-label {
+    font-size: 12px;
+    color: var(--secondary-text-color);
+    font-style: italic;
+    margin-top: 4px;
+  }
 
   /* ===== Composer ===== */
   .composer {
@@ -904,9 +918,17 @@ class ClaudeChatPanel extends HTMLElement {
     title.textContent = this._activeSession.title;
 
     // Build a quick lookup: pending_change_id → PendingChange.
+    // Also track the latest pending change per target so older proposals
+    // for the same resource (e.g. same automation re-edited) can render
+    // as superseded.
     const pendingById = {};
+    const latestByTarget = {};
     for (const c of this._activeSession.pending_changes || []) {
       pendingById[c.id] = c;
+      latestByTarget[targetKeyFor(c)] = c.id;
+    }
+    for (const c of Object.values(pendingById)) {
+      c._superseded = latestByTarget[targetKeyFor(c)] !== c.id;
     }
 
     for (const msg of this._activeSession.messages) {
@@ -983,7 +1005,7 @@ class ClaudeChatPanel extends HTMLElement {
 
   _renderPendingChange(container, change) {
     const el = document.createElement("div");
-    el.className = "pending-card";
+    el.className = "pending-card" + (change._superseded ? " superseded" : "");
     let body;
     const p = change.payload || {};
     if (change.kind === "service_call") {
@@ -1005,22 +1027,45 @@ class ClaudeChatPanel extends HTMLElement {
     } else {
       body = "";
     }
+    const supersededLabel = change._superseded
+      ? '<div class="superseded-label">Superseded by a newer proposal below — act on that one instead.</div>'
+      : "";
     el.innerHTML = `
       <h3>⚠ ${labelForKind(change.kind)}</h3>
       <p>${escapeHtml(change.summary)}</p>
       ${body}
+      ${supersededLabel}
       <div class="actions">
         <button class="primary approve">Apply</button>
         <button class="reject">Reject</button>
       </div>
     `;
-    el.querySelector(".approve").addEventListener("click", () =>
-      this._approveChange(change.id)
-    );
-    el.querySelector(".reject").addEventListener("click", () =>
-      this._rejectChange(change.id)
-    );
+    if (!change._superseded) {
+      el.querySelector(".approve").addEventListener("click", () =>
+        this._approveChange(change.id)
+      );
+      el.querySelector(".reject").addEventListener("click", () =>
+        this._rejectChange(change.id)
+      );
+    }
     container.appendChild(el);
+  }
+}
+
+function targetKeyFor(change) {
+  const p = change.payload || {};
+  switch (change.kind) {
+    case "dashboard_update":
+      return `dashboard:${p.url_path || ""}`;
+    case "automation_update":
+    case "automation_delete":
+      return `automation:${p.automation_id || ""}`;
+    case "automation_create":
+      return `automation_create:${p.config?.alias || change.id}`;
+    case "service_call":
+      return `service:${p.domain}.${p.service}:${JSON.stringify(p.target || {})}`;
+    default:
+      return change.id;
   }
 }
 
