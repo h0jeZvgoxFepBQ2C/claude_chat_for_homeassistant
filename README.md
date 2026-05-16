@@ -63,22 +63,6 @@ A sidebar chat panel powered by Anthropic's Claude. Ask Claude to inspect your H
 4. Settings → Devices & Services → **Add Integration** → search "Claude Chat".
 5. Paste your Anthropic API key (get one at [console.anthropic.com](https://console.anthropic.com)).
 
-## How it works
-
-```
-┌──────────────────┐     ws      ┌────────────────────┐     https     ┌────────────┐
-│ Sidebar panel    │ ─────────►  │ custom_components/ │ ────────────► │ Anthropic  │
-│ (claude-chat-    │             │   claude_chat      │               │ API        │
-│  panel.js)       │ ◄─ stream ─ │   (Python)         │ ◄── stream ── │            │
-└──────────────────┘             └────────────────────┘               └────────────┘
-                                          │
-                                          ▼
-                                  HA tools: states, areas,
-                                  Lovelace storage, services
-```
-
-The integration runs Claude with [tool use](https://docs.anthropic.com/claude/docs/tool-use). When Claude wants to read your entities, modify a dashboard, or call a service, it calls a tool; the integration runs it against HA's internals; the result goes back to Claude. Mutating tools (`propose_*`) **stage** changes the user must approve in the UI before they hit storage or trigger services.
-
 ## Limitations / not yet supported
 
 - YAML-mode dashboards are read-only (HA can't edit YAML files programmatically from a running integration).
