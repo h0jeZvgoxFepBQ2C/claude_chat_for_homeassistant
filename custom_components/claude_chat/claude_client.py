@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 from anthropic import AsyncAnthropic
 
 from .const import DEFAULT_MAX_TOKENS, MAX_TURNS_PER_REQUEST
+from .media import to_api_content
 from .storage import Message
 from .tools import TOOL_DEFINITIONS, ToolRegistry
 
@@ -108,7 +109,7 @@ class ClaudeClient:
         Returns the new messages appended (assistant turns + tool_result turns).
         """
         active_model = model or self._default_model
-        api_messages = _to_api_messages(history)
+        api_messages = _to_api_messages(history, self._tools.hass, session_id)
         new_messages: list[Message] = []
 
         for turn in range(MAX_TURNS_PER_REQUEST):
@@ -230,8 +231,20 @@ class ClaudeClient:
         return new_messages
 
 
-def _to_api_messages(history: list[Message]) -> list[dict[str, Any]]:
-    return [{"role": m.role, "content": m.content} for m in history]
+def _to_api_messages(history: list[Message], hass, session_id: str) -> list[dict[str, Any]]:
+    """Convert stored messages to Anthropic-API shape.
+
+    User messages may contain `image_ref` blocks that point at files on
+    disk. We read + base64-encode them here so the API sees them as
+    standard `image` content blocks.
+    """
+    out = []
+    for m in history:
+        content = m.content
+        if any(b.get("type") == "image_ref" for b in content):
+            content = to_api_content(hass, session_id, content)
+        out.append({"role": m.role, "content": content})
+    return out
 
 
 def _stringify_tool_result(result: Any) -> str:

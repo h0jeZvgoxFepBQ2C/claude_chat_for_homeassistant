@@ -338,7 +338,76 @@ const STYLES = `
     border-top: 1px solid var(--divider-color);
     padding: 16px 24px;
     display: flex;
+    flex-direction: column;
     gap: 8px;
+    position: relative;
+  }
+  .composer-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .attach-btn {
+    background: var(--secondary-background-color);
+    color: var(--primary-text-color);
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    cursor: pointer;
+    padding: 0 10px;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .attach-btn:hover { background: var(--primary-background-color); }
+  .attachments {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .attachment {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--secondary-background-color);
+    border: 1px solid var(--divider-color);
+  }
+  .attachment img { width: 100%; height: 100%; object-fit: cover; }
+  .attachment .remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 18px;
+    padding: 0;
+  }
+  .composer.drag-active::after {
+    content: "Drop image to attach";
+    position: absolute;
+    inset: 4px;
+    border: 2px dashed var(--primary-color);
+    border-radius: 10px;
+    background: rgba(var(--rgb-primary-color, 33, 150, 243), 0.08);
+    color: var(--primary-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    font-weight: 500;
+  }
+  .message-image {
+    display: block;
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: 8px;
+    margin: 4px 0;
   }
   .composer textarea {
     flex: 1;
@@ -439,6 +508,9 @@ class ClaudeChatPanel extends HTMLElement {
     // Tool calls created during the current streaming turn — keyed by id.
     this._streamingToolCalls = {};
     this._diagnostics = null;
+    // Pending image attachments (not yet sent), shape: [{data, media_type, previewUrl}]
+    this._attachments = [];
+    this._dragDepth = 0;
   }
 
   set hass(value) {
@@ -553,7 +625,8 @@ class ClaudeChatPanel extends HTMLElement {
   async _sendMessage(textOverride) {
     const textarea = this.shadowRoot.querySelector("textarea");
     const text = (textOverride ?? textarea.value).trim();
-    if (!text || this._isStreaming) return;
+    const hasAttachments = this._attachments.length > 0;
+    if ((!text && !hasAttachments) || this._isStreaming) return;
     if (!this._activeSessionId) await this._createSession();
 
     if (!textOverride) textarea.value = "";
@@ -562,11 +635,30 @@ class ClaudeChatPanel extends HTMLElement {
     this._currentStreamingText = "";
     this._streamingToolCalls = {};
 
+    // Snapshot images for the WS payload, then clear preview state.
+    const images = this._attachments.map((a) => ({
+      data: a.data,
+      media_type: a.media_type,
+    }));
+    // Optimistic local content for immediate render (preview URLs still alive).
+    const optimisticContent = [
+      ...this._attachments.map((a) => ({
+        type: "image_ref",
+        _previewUrl: a.previewUrl,
+        media_type: a.media_type,
+      })),
+    ];
+    if (text) optimisticContent.push({ type: "text", text });
     this._activeSession.messages.push({
       role: "user",
-      content: [{ type: "text", text }],
+      content: optimisticContent,
       created_at: Date.now() / 1000,
     });
+    // Don't revoke preview URLs yet — the optimistic message uses them
+    // until the server responds with `done` and we re-render with the
+    // server-side filenames.
+    this._attachments = [];
+    this._renderAttachments();
     this._renderChat();
     this._setComposerStreaming(true);
     this._appendTypingIndicator();
@@ -579,6 +671,7 @@ class ClaudeChatPanel extends HTMLElement {
           session_id: this._activeSessionId,
           text,
           model: this._selectedModel,
+          images,
         }
       );
     } catch (err) {
@@ -750,12 +843,17 @@ class ClaudeChatPanel extends HTMLElement {
         <div id="hint-banner-slot"></div>
         <div class="messages" id="messages"></div>
         <div class="composer">
-          <textarea
-            placeholder="Ask Claude to inspect or modify your Home Assistant…"
-            rows="2"
-          ></textarea>
-          <button class="send">Send</button>
-          <button class="stop" style="display:none">Stop</button>
+          <div class="attachments" id="attachments"></div>
+          <div class="composer-row">
+            <button class="attach-btn" id="attach" title="Attach image">📎</button>
+            <textarea
+              placeholder="Ask Claude to inspect or modify your Home Assistant…"
+              rows="2"
+            ></textarea>
+            <button class="send">Send</button>
+            <button class="stop" style="display:none">Stop</button>
+          </div>
+          <input type="file" id="file-picker" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none">
         </div>
       </section>
     `;
@@ -787,6 +885,97 @@ class ClaudeChatPanel extends HTMLElement {
     this.shadowRoot.querySelector(".sidebar-backdrop").addEventListener("click", () =>
       this._closeSidebar()
     );
+
+    // Image attachments: paperclip, file picker, drag/drop, paste.
+    const composer = this.shadowRoot.querySelector(".composer");
+    const picker = this.shadowRoot.querySelector("#file-picker");
+    this.shadowRoot.querySelector("#attach").addEventListener("click", () =>
+      picker.click()
+    );
+    picker.addEventListener("change", async (e) => {
+      for (const f of e.target.files) await this._addFile(f);
+      picker.value = "";
+    });
+    ta.addEventListener("paste", async (e) => {
+      const items = e.clipboardData?.items || [];
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) await this._addFile(file);
+        }
+      }
+    });
+    composer.addEventListener("dragenter", (e) => {
+      if (!e.dataTransfer?.types?.includes("Files")) return;
+      e.preventDefault();
+      this._dragDepth++;
+      composer.classList.add("drag-active");
+    });
+    composer.addEventListener("dragover", (e) => e.preventDefault());
+    composer.addEventListener("dragleave", () => {
+      this._dragDepth = Math.max(0, this._dragDepth - 1);
+      if (this._dragDepth === 0) composer.classList.remove("drag-active");
+    });
+    composer.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      this._dragDepth = 0;
+      composer.classList.remove("drag-active");
+      for (const f of e.dataTransfer?.files || []) await this._addFile(f);
+    });
+  }
+
+  async _addFile(file) {
+    if (!file || !file.type.startsWith("image/")) return;
+    const allowed = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      alert(`Unsupported image type: ${file.type}`);
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Image larger than 10 MB — not attached.");
+      return;
+    }
+    const data = await this._fileToBase64(file);
+    const previewUrl = URL.createObjectURL(file);
+    this._attachments.push({ data, media_type: file.type, previewUrl });
+    this._renderAttachments();
+  }
+
+  _fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result || "";
+        // strip the "data:image/png;base64," prefix
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  _renderAttachments() {
+    const wrap = this.shadowRoot.querySelector("#attachments");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    this._attachments.forEach((att, idx) => {
+      const el = document.createElement("div");
+      el.className = "attachment";
+      el.innerHTML = `<img src="${att.previewUrl}"><button class="remove" title="Remove">×</button>`;
+      el.querySelector(".remove").addEventListener("click", () => {
+        URL.revokeObjectURL(att.previewUrl);
+        this._attachments.splice(idx, 1);
+        this._renderAttachments();
+      });
+      wrap.appendChild(el);
+    });
+  }
+
+  _clearAttachments() {
+    for (const a of this._attachments) URL.revokeObjectURL(a.previewUrl);
+    this._attachments = [];
+    this._renderAttachments();
   }
 
   _toggleSidebar() {
@@ -946,15 +1135,36 @@ class ClaudeChatPanel extends HTMLElement {
 
   _renderMessage(container, msg, pendingById) {
     if (msg.role === "user") {
-      const text = (msg.content || [])
+      const blocks = msg.content || [];
+      const text = blocks
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join("");
-      if (!text) return;
+      const imageRefs = blocks.filter((b) => b.type === "image_ref");
+      if (!text && imageRefs.length === 0) return;
       const row = document.createElement("div");
       row.className = "message-row user";
-      row.innerHTML = `<div class="message user"></div>`;
-      row.querySelector(".message").textContent = text;
+      const bubble = document.createElement("div");
+      bubble.className = "message user";
+      // Stop white-space:pre-wrap from squishing the image bubble layout.
+      bubble.style.display = "flex";
+      bubble.style.flexDirection = "column";
+      bubble.style.gap = "6px";
+      for (const ref of imageRefs) {
+        const img = document.createElement("img");
+        img.className = "message-image";
+        img.src = ref._previewUrl
+          || `/claude_chat_media/${this._activeSessionId}/${ref.filename}`;
+        img.alt = "";
+        bubble.appendChild(img);
+      }
+      if (text) {
+        const p = document.createElement("div");
+        p.style.whiteSpace = "pre-wrap";
+        p.textContent = text;
+        bubble.appendChild(p);
+      }
+      row.appendChild(bubble);
       container.appendChild(row);
       return;
     }

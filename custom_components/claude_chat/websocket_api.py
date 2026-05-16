@@ -22,6 +22,7 @@ from homeassistant.core import HomeAssistant, callback
 
 from .claude_client import AVAILABLE_MODELS, ClaudeClient
 from .const import DOMAIN
+from .media import delete_session_media, save_image
 from .storage import Message, SessionStore
 from .tools import ToolRegistry, automations_include_configured
 
@@ -119,6 +120,7 @@ async def ws_delete_session(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
 ) -> None:
     await _store(hass).delete(msg["session_id"])
+    await hass.async_add_executor_job(delete_session_media, hass, msg["session_id"])
     connection.send_result(msg["id"], {"ok": True})
 
 
@@ -137,12 +139,22 @@ async def ws_rename_session(
     connection.send_result(msg["id"], {"ok": True})
 
 
+_IMAGE_SCHEMA = vol.Schema(
+    {
+        vol.Required("data"): str,  # base64 (no data: prefix)
+        vol.Required("media_type"): str,  # e.g. image/jpeg
+    },
+    extra=vol.PREVENT_EXTRA,
+)
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): "claude_chat/send_message",
         vol.Required("session_id"): str,
         vol.Required("text"): str,
         vol.Optional("model"): str,
+        vol.Optional("images", default=list): [_IMAGE_SCHEMA],
     }
 )
 @websocket_api.async_response
@@ -164,9 +176,26 @@ async def ws_send_message(
 
     is_first_user_message = not any(m.role == "user" for m in session.messages)
     user_text = msg["text"]
-    user_message = Message(
-        role="user", content=[{"type": "text", "text": user_text}]
-    )
+    images = msg.get("images") or []
+
+    # Save attached images to disk and build image_ref content blocks.
+    content_blocks: list[dict[str, Any]] = []
+    for img in images:
+        try:
+            ref = await hass.async_add_executor_job(
+                save_image, hass, session.id, img["media_type"], img["data"]
+            )
+        except ValueError as err:
+            connection.send_error(msg["id"], "invalid_image", str(err))
+            return
+        content_blocks.append(ref)
+    if user_text:
+        content_blocks.append({"type": "text", "text": user_text})
+    if not content_blocks:
+        connection.send_error(msg["id"], "empty_message", "Provide text or an image")
+        return
+
+    user_message = Message(role="user", content=content_blocks)
     await store.append_message(session.id, user_message)
     connection.send_result(msg["id"], {"streaming": True})
 

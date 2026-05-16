@@ -1,13 +1,14 @@
 {
   "domain": "claude_chat",
   "name": "Claude Chat",
+  "after_dependencies": ["recorder", "trace"],
   "codeowners": ["@h0jeZvgoxFepBQ2C"],
   "config_flow": true,
-  "dependencies": ["websocket_api", "frontend", "http", "lovelace", "recorder", "trace"],
+  "dependencies": ["websocket_api", "frontend", "http", "lovelace"],
   "documentation": "https://github.com/h0jeZvgoxFepBQ2C/claude_chat_for_homeassistant",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/h0jeZvgoxFepBQ2C/claude_chat_for_homeassistant/issues",
   "requirements": ["anthropic>=0.40.0"],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

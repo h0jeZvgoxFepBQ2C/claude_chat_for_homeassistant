@@ -24,9 +24,12 @@ from .const import (
     PANEL_TITLE,
     PANEL_URL_PATH,
 )
+from .media import ensure_media_root, media_root
 from .storage import SessionStore
 from .tools import ToolRegistry
 from .websocket_api import async_register_commands
+
+MEDIA_URL = "/claude_chat_media"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,10 +59,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_register_commands(hass)
         hass.data[f"{DOMAIN}_ws_registered"] = True
 
-    # Static frontend assets
+    # Static frontend assets + user-uploaded image storage.
     frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
+    await hass.async_add_executor_job(ensure_media_root, hass)
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(FRONTEND_URL, frontend_dir, cache_headers=False)]
+        [
+            StaticPathConfig(FRONTEND_URL, frontend_dir, cache_headers=False),
+            StaticPathConfig(MEDIA_URL, media_root(hass), cache_headers=True),
+        ]
     )
 
     # Sidebar panel
