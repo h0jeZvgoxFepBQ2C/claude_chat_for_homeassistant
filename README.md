@@ -25,8 +25,8 @@ A sidebar chat panel powered by Anthropic's Claude. Ask Claude to inspect your H
 **Creating an automation — Claude generates the YAML, you Apply to write to `automations.yaml` and reload**
 ![automation review](screenshots/06_automation_review.png)
 
-**If your `configuration.yaml` is missing the `!include` line, the panel tells you what to add**
-![missing include banner](screenshots/07_missing_include_banner.png)
+**Dragging an image into the composer — Claude can see it (screenshots, photos of device labels, wiring diagrams)**
+![image attached](screenshots/11_image_attached.png)
 
 ## What it does
 
