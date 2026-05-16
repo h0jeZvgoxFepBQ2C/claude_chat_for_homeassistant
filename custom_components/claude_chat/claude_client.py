@@ -191,7 +191,10 @@ class ClaudeClient:
             tool_result_blocks: list[dict[str, Any]] = []
             for tool_use in tool_uses:
                 result = await self._tools.call(
-                    tool_use["name"], tool_use["input"], session_id
+                    tool_use["name"],
+                    tool_use["input"],
+                    session_id,
+                    tool_use["id"],
                 )
                 await emit(
                     {

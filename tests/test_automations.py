@@ -199,6 +199,25 @@ async def test_delete_removes_entry(setup, hass):
     assert written[0]["id"] == "a"
 
 
+async def test_propose_records_source_tool_use_id(setup, hass):
+    """PendingChange.source_tool_use_id matches the calling tool_use_id so
+    the frontend can render the card directly after the chip that produced it."""
+    tools, store, sid = setup
+    config = {
+        "alias": "Sunset",
+        "trigger": [{"platform": "state", "entity_id": "sun.sun"}],
+        "action": [{"service": "notify.notify"}],
+    }
+    await tools.call(
+        "propose_automation_create",
+        {"config": config, "summary": "x"},
+        sid,
+        tool_use_id="toolu_abc",
+    )
+    change = store.get_or_raise(sid).pending_changes[0]
+    assert change.source_tool_use_id == "toolu_abc"
+
+
 async def test_get_automation_finds_by_id(setup, hass):
     tools, _, sid = setup
     path = _automations_path(hass)

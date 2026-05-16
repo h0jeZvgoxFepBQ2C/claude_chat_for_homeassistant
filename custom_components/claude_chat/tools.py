@@ -229,13 +229,17 @@ class ToolRegistry:
         self.store = store
 
     async def call(
-        self, name: str, arguments: dict[str, Any], session_id: str
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        session_id: str,
+        tool_use_id: str | None = None,
     ) -> dict[str, Any]:
         handler = getattr(self, f"_tool_{name}", None)
         if handler is None:
             return {"error": f"Unknown tool: {name}"}
         try:
-            return await handler(arguments, session_id)
+            return await handler(arguments, session_id, tool_use_id)
         except Exception as err:  # noqa: BLE001
             _LOGGER.exception("Tool %s failed", name)
             return {"error": str(err)}
@@ -243,7 +247,7 @@ class ToolRegistry:
     # --- read-only tools -------------------------------------------------
 
     async def _tool_list_entities(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         domain_filter = args.get("domain")
         area_filter = args.get("area")
@@ -281,7 +285,7 @@ class ToolRegistry:
         return {"entities": results, "truncated": len(results) >= limit}
 
     async def _tool_get_entity(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         entity_id = args["entity_id"]
         state = self.hass.states.get(entity_id)
@@ -296,7 +300,7 @@ class ToolRegistry:
         }
 
     async def _tool_list_areas(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         area_reg = ar.async_get(self.hass)
         return {
@@ -308,7 +312,7 @@ class ToolRegistry:
     # --- dashboard tools -------------------------------------------------
 
     async def _tool_list_dashboards(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         dashboards = self._lovelace_dashboards()
         result = []
@@ -326,7 +330,7 @@ class ToolRegistry:
         return {"dashboards": result}
 
     async def _tool_get_dashboard(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         url_path = args.get("url_path", "lovelace")
         config = await self._load_dashboard_config(url_path)
@@ -335,7 +339,7 @@ class ToolRegistry:
         return {"url_path": url_path, "config": config}
 
     async def _tool_propose_dashboard_update(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         url_path = args.get("url_path", "lovelace")
         new_config = args["new_config"]
@@ -361,6 +365,7 @@ class ToolRegistry:
             summary=summary,
             payload={"url_path": url_path, "new_config": new_config},
             diff=diff,
+            source_tool_use_id=tool_use_id,
         )
         await self.store.add_pending(session_id, change)
         return {
@@ -370,7 +375,7 @@ class ToolRegistry:
         }
 
     async def _tool_list_lovelace_resources(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         lovelace_data = self.hass.data.get("lovelace")
         if lovelace_data is None:
@@ -387,7 +392,7 @@ class ToolRegistry:
         }
 
     async def _tool_list_automations(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         result = []
         for state in self.hass.states.async_all("automation"):
@@ -402,7 +407,7 @@ class ToolRegistry:
         return {"automations": result}
 
     async def _tool_get_automation(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         automation_id = args["automation_id"]
         path = self.hass.config.path("automations.yaml")
@@ -415,7 +420,7 @@ class ToolRegistry:
         return {"error": f"Automation not found: {automation_id}"}
 
     async def _tool_propose_automation_create(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         config = args["config"]
         if not isinstance(config, dict):
@@ -434,6 +439,7 @@ class ToolRegistry:
             summary=args["summary"],
             payload={"config": config, "yaml": _yaml_dump(config)},
             diff=None,
+            source_tool_use_id=tool_use_id,
         )
         await self.store.add_pending(session_id, change)
         return {
@@ -443,7 +449,7 @@ class ToolRegistry:
         }
 
     async def _tool_propose_automation_update(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         automation_id = args["automation_id"]
         new_config = args["config"]
@@ -469,6 +475,7 @@ class ToolRegistry:
                 "yaml": _yaml_dump(new_config),
             },
             diff=diff,
+            source_tool_use_id=tool_use_id,
         )
         await self.store.add_pending(session_id, change)
         return {
@@ -478,7 +485,7 @@ class ToolRegistry:
         }
 
     async def _tool_propose_automation_delete(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         automation_id = args["automation_id"]
         path = self.hass.config.path("automations.yaml")
@@ -499,6 +506,7 @@ class ToolRegistry:
                 "yaml": _yaml_dump(existing),
             },
             diff=None,
+            source_tool_use_id=tool_use_id,
         )
         await self.store.add_pending(session_id, change)
         return {
@@ -508,7 +516,7 @@ class ToolRegistry:
         }
 
     async def _tool_list_services(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         domain_filter = args.get("domain")
         services = self.hass.services.async_services()
@@ -527,7 +535,7 @@ class ToolRegistry:
         return {"services": result, "count": len(result)}
 
     async def _tool_propose_service_call(
-        self, args: dict[str, Any], session_id: str
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         domain = args["domain"]
         service = args["service"]
@@ -545,6 +553,7 @@ class ToolRegistry:
                 "target": args.get("target") or {},
             },
             diff=None,
+            source_tool_use_id=tool_use_id,
         )
         await self.store.add_pending(session_id, change)
         return {

@@ -28,6 +28,11 @@ class PendingChange:
     summary: str
     payload: dict[str, Any]
     diff: str | None = None
+    # The Anthropic tool_use_id that produced this pending change. Used by
+    # the frontend to render the card directly after the corresponding
+    # tool_use block in the chat — so a new proposal lands at the bottom,
+    # not at the top of the chat.
+    source_tool_use_id: str | None = None
 
 
 @dataclass

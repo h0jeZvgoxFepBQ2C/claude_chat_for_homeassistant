@@ -959,46 +959,40 @@ class ClaudeChatPanel extends HTMLElement {
       return;
     }
 
-    if (msg.role === "assistant") {
-      for (const block of msg.content || []) {
-        if (block.type === "text") {
-          if (!block.text) continue;
-          const row = document.createElement("div");
-          row.className = "message-row assistant";
-          const bubble = document.createElement("div");
-          bubble.className = "message assistant";
-          bubble.innerHTML = renderMarkdown(block.text);
-          row.appendChild(bubble);
-          container.appendChild(row);
-        } else if (block.type === "tool_use") {
-          const el = document.createElement("details");
-          el.className = "tool-call";
-          el.innerHTML = `
-            <summary>🔧 ${escapeHtml(block.name)} <span class="status">✓</span></summary>
-            <div class="body"><pre>${escapeHtml(JSON.stringify(block.input, null, 2))}</pre></div>
-          `;
-          container.appendChild(el);
-        }
-      }
-    } else if (msg.role === "user") {
-      // also handles tool_result blocks (role=user)
+    if (msg.role !== "assistant") return;
+
+    // Build a quick lookup: tool_use_id → pending change produced by it.
+    const pendingByToolUse = {};
+    for (const c of Object.values(pendingById)) {
+      if (c.source_tool_use_id) pendingByToolUse[c.source_tool_use_id] = c;
     }
 
-    // After every assistant message, render any pending change that was
-    // produced by one of its tool_use calls.
-    if (msg.role === "assistant") {
-      for (const block of msg.content || []) {
-        if (block.type !== "tool_use") continue;
-        // We don't have direct propose→change mapping in the message data,
-        // but propose_* tools produce exactly one pending_change per call.
-        // We render unmatched pending changes after the assistant message
-        // they likely came from (the latest one).
-      }
-      // Render any pending changes that haven't been rendered yet.
-      for (const change of Object.values(pendingById)) {
-        if (change._rendered) continue;
-        this._renderPendingChange(container, change);
-        change._rendered = true;
+    for (const block of msg.content || []) {
+      if (block.type === "text") {
+        if (!block.text) continue;
+        const row = document.createElement("div");
+        row.className = "message-row assistant";
+        const bubble = document.createElement("div");
+        bubble.className = "message assistant";
+        bubble.innerHTML = renderMarkdown(block.text);
+        row.appendChild(bubble);
+        container.appendChild(row);
+      } else if (block.type === "tool_use") {
+        const el = document.createElement("details");
+        el.className = "tool-call";
+        el.innerHTML = `
+          <summary>🔧 ${escapeHtml(block.name)} <span class="status">✓</span></summary>
+          <div class="body"><pre>${escapeHtml(JSON.stringify(block.input, null, 2))}</pre></div>
+        `;
+        container.appendChild(el);
+
+        // If this tool_use produced a pending change, render it right
+        // after the tool chip so it lands at the right spot in the chat.
+        const match = pendingByToolUse[block.id];
+        if (match && !match._rendered) {
+          this._renderPendingChange(container, match);
+          match._rendered = true;
+        }
       }
     }
   }
