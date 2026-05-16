@@ -218,6 +218,57 @@ async def test_propose_records_source_tool_use_id(setup, hass):
     assert change.source_tool_use_id == "toolu_abc"
 
 
+async def test_second_propose_supersedes_first_for_same_automation(setup, hass):
+    """Two propose_automation_update calls for the same automation_id should
+    end with only ONE pending change in the session — the latest one."""
+    tools, store, sid = setup
+    # Seed a target.
+    path = _automations_path(hass)
+    with open(path, "w") as f:
+        yaml.safe_dump(
+            [{"id": "a1", "alias": "Old", "trigger": [], "action": []}], f
+        )
+    await tools.call(
+        "propose_automation_update",
+        {"automation_id": "a1", "config": {"alias": "v1", "trigger": [], "action": []}, "summary": "first"},
+        sid,
+    )
+    await tools.call(
+        "propose_automation_update",
+        {"automation_id": "a1", "config": {"alias": "v2", "trigger": [], "action": []}, "summary": "second"},
+        sid,
+    )
+    session = store.get_or_raise(sid)
+    assert len(session.pending_changes) == 1
+    assert session.pending_changes[0].summary == "second"
+
+
+async def test_propose_for_different_automation_does_not_supersede(setup, hass):
+    """Two pending changes for different automations should both stay."""
+    tools, store, sid = setup
+    path = _automations_path(hass)
+    with open(path, "w") as f:
+        yaml.safe_dump(
+            [
+                {"id": "a1", "alias": "First", "trigger": [], "action": []},
+                {"id": "a2", "alias": "Second", "trigger": [], "action": []},
+            ],
+            f,
+        )
+    await tools.call(
+        "propose_automation_update",
+        {"automation_id": "a1", "config": {"alias": "x", "trigger": [], "action": []}, "summary": "a"},
+        sid,
+    )
+    await tools.call(
+        "propose_automation_update",
+        {"automation_id": "a2", "config": {"alias": "y", "trigger": [], "action": []}, "summary": "b"},
+        sid,
+    )
+    session = store.get_or_raise(sid)
+    assert len(session.pending_changes) == 2
+
+
 async def test_get_automation_finds_by_id(setup, hass):
     tools, _, sid = setup
     path = _automations_path(hass)

@@ -28,6 +28,12 @@ Rules:
   propose_automation_update, and propose_automation_delete all STAGE changes \
   for the user to review. They do NOT apply immediately. Do not say "done" \
   until the user has approved.
+- If you propose a revised change for the SAME target (same dashboard \
+  url_path, same automation_id, etc.), the older pending change is \
+  AUTOMATICALLY replaced — there is only ever one open proposal per target. \
+  Never tell the user to "reject the old one first" or "ablehnen Sie die \
+  alte Version" — that just confuses them. Just say what changed and ask \
+  them to review.
 - For automations: use list_automations to find an automation_id, then \
   get_automation to read the full config before propose_automation_update. \
   Build configs as dicts (e.g. {"alias": "...", "trigger": [{"platform": \

@@ -29,6 +29,28 @@ from .storage import PendingChange, SessionStore
 _LOGGER = logging.getLogger(__name__)
 
 
+def _target_key(change: PendingChange) -> str:
+    """A stable key identifying *what resource* a pending change targets.
+
+    Pending changes with the same target supersede each other — only the
+    latest one is kept. Mirrors the frontend's targetKeyFor in
+    claude-chat-panel.js so backend and UI agree.
+    """
+    p = change.payload or {}
+    kind = change.kind
+    if kind == "dashboard_update":
+        return f"dashboard:{p.get('url_path', '')}"
+    if kind in ("automation_update", "automation_delete"):
+        return f"automation:{p.get('automation_id', '')}"
+    if kind == "automation_create":
+        config = p.get("config") or {}
+        return f"automation_create:{config.get('alias', change.id)}"
+    if kind == "service_call":
+        target_json = json.dumps(p.get("target") or {}, sort_keys=True)
+        return f"service:{p.get('domain')}.{p.get('service')}:{target_json}"
+    return change.id
+
+
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "list_entities",
@@ -280,6 +302,23 @@ class ToolRegistry:
         self.hass = hass
         self.store = store
 
+    async def _add_pending_supersede(
+        self, session_id: str, change: PendingChange
+    ) -> None:
+        """Add a pending change, dropping earlier ones with the same target.
+
+        This means a follow-up proposal for the same dashboard / automation /
+        service call automatically replaces the previous proposal — the user
+        only ever sees one Apply / Reject for any given target.
+        """
+        session = self.store.get(session_id)
+        if session is not None:
+            new_key = _target_key(change)
+            stale = [c.id for c in session.pending_changes if _target_key(c) == new_key]
+            for cid in stale:
+                await self.store.remove_pending(session_id, cid)
+        await self.store.add_pending(session_id, change)
+
     async def call(
         self,
         name: str,
@@ -419,7 +458,7 @@ class ToolRegistry:
             diff=diff,
             source_tool_use_id=tool_use_id,
         )
-        await self.store.add_pending(session_id, change)
+        await self._add_pending_supersede(session_id, change)
         return {
             "pending_change_id": change.id,
             "summary": summary,
@@ -577,7 +616,7 @@ class ToolRegistry:
             diff=None,
             source_tool_use_id=tool_use_id,
         )
-        await self.store.add_pending(session_id, change)
+        await self._add_pending_supersede(session_id, change)
         return {
             "pending_change_id": change.id,
             "summary": args["summary"],
@@ -613,7 +652,7 @@ class ToolRegistry:
             diff=diff,
             source_tool_use_id=tool_use_id,
         )
-        await self.store.add_pending(session_id, change)
+        await self._add_pending_supersede(session_id, change)
         return {
             "pending_change_id": change.id,
             "summary": args["summary"],
@@ -644,7 +683,7 @@ class ToolRegistry:
             diff=None,
             source_tool_use_id=tool_use_id,
         )
-        await self.store.add_pending(session_id, change)
+        await self._add_pending_supersede(session_id, change)
         return {
             "pending_change_id": change.id,
             "summary": args["summary"],
@@ -691,7 +730,7 @@ class ToolRegistry:
             diff=None,
             source_tool_use_id=tool_use_id,
         )
-        await self.store.add_pending(session_id, change)
+        await self._add_pending_supersede(session_id, change)
         return {
             "pending_change_id": change.id,
             "summary": args["summary"],
