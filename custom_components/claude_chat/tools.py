@@ -15,12 +15,14 @@ import os
 import tempfile
 import time
 import uuid
+from datetime import timedelta
 from typing import Any
 
 import yaml as yaml_lib
 from homeassistant.components.lovelace.const import ConfigNotFound
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, entity_registry as er
+from homeassistant.util import dt as dt_util
 
 from .storage import PendingChange, SessionStore
 
@@ -98,6 +100,56 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name, and current state (on/off)."
         ),
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "list_automation_traces",
+        "description": (
+            "List recent execution traces of an automation. Each entry shows "
+            "when it ran, whether it succeeded, the triggering event, and "
+            "whether all conditions passed. Use get_automation_trace for "
+            "the full step-by-step detail of a specific run."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "automation_id": {"type": "string"},
+                "limit": {"type": "integer", "default": 10},
+            },
+            "required": ["automation_id"],
+        },
+    },
+    {
+        "name": "get_automation_trace",
+        "description": (
+            "Get the full step-by-step trace of one automation execution: "
+            "triggers, conditions (with pass/fail results), actions (timing "
+            "and outputs), and any errors. Use this to debug why an "
+            "automation behaved a certain way."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "automation_id": {"type": "string"},
+                "run_id": {"type": "string"},
+            },
+            "required": ["automation_id", "run_id"],
+        },
+    },
+    {
+        "name": "get_state_history",
+        "description": (
+            "Get recent state changes for an entity (last N hours). Returns "
+            "timestamps and states. Useful to see when sensors changed, "
+            "when automations triggered, when devices went offline, etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "hours": {"type": "integer", "default": 24},
+            },
+            "required": ["entity_id"],
+        },
     },
     {
         "name": "list_services",
@@ -405,6 +457,90 @@ class ToolRegistry:
                 }
             )
         return {"automations": result}
+
+    async def _tool_list_automation_traces(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        automation_id = args["automation_id"]
+        limit = int(args.get("limit", 10))
+        try:
+            from homeassistant.components.trace.const import DATA_TRACE
+        except ImportError:
+            return {"error": "Trace component not available in this HA version"}
+        all_traces = self.hass.data.get(DATA_TRACE)
+        if all_traces is None:
+            return {"traces": [], "note": "No traces stored yet — has this automation run since HA started?"}
+        item_traces = all_traces.get("automation", {}).get(automation_id, {})
+        if not item_traces:
+            return {
+                "traces": [],
+                "note": (
+                    f"No traces found for automation_id={automation_id}. "
+                    "Check the ID via list_automations and confirm the "
+                    "automation has fired at least once since HA started."
+                ),
+            }
+        sorted_traces = sorted(
+            item_traces.values(),
+            key=lambda t: getattr(t, "timestamp_finish", None)
+            or getattr(t, "timestamp_start", ""),
+            reverse=True,
+        )[:limit]
+        return {
+            "automation_id": automation_id,
+            "traces": [t.as_short_dict() for t in sorted_traces],
+        }
+
+    async def _tool_get_automation_trace(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        from homeassistant.components.trace.const import DATA_TRACE
+
+        automation_id = args["automation_id"]
+        run_id = args["run_id"]
+        all_traces = self.hass.data.get(DATA_TRACE) or {}
+        trace = (
+            all_traces.get("automation", {}).get(automation_id, {}).get(run_id)
+        )
+        if trace is None:
+            return {"error": f"Trace not found: {automation_id}/{run_id}"}
+        return {"trace": trace.as_dict()}
+
+    async def _tool_get_state_history(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        try:
+            from homeassistant.components.recorder import get_instance
+            from homeassistant.components.recorder.history import (
+                state_changes_during_period,
+            )
+        except ImportError:
+            return {"error": "Recorder component not available"}
+
+        entity_id = args["entity_id"]
+        hours = int(args.get("hours", 24))
+        end = dt_util.utcnow()
+        start = end - timedelta(hours=hours)
+
+        rec = get_instance(self.hass)
+        states_by_entity = await rec.async_add_executor_job(
+            state_changes_during_period,
+            self.hass,
+            start,
+            end,
+            entity_id,
+            True,  # no_attributes — we only want state changes, not attribute changes
+        )
+        states = states_by_entity.get(entity_id, [])
+        return {
+            "entity_id": entity_id,
+            "hours": hours,
+            "count": len(states),
+            "events": [
+                {"timestamp": s.last_changed.isoformat(), "state": s.state}
+                for s in states
+            ],
+        }
 
     async def _tool_get_automation(
         self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None

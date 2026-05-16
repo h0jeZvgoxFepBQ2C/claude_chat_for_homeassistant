@@ -39,6 +39,7 @@ A sidebar chat panel powered by Anthropic's Claude. Ask Claude to inspect your H
   - `list_entities`, `get_entity`, `list_areas`
   - `list_dashboards`, `get_dashboard`, `list_lovelace_resources`
   - `list_automations`, `get_automation`, `list_services`
+  - **Debugging**: `list_automation_traces`, `get_automation_trace`, `get_state_history` — ask *"why didn't my X automation fire yesterday"* and Claude pulls the trace, reads the conditions/triggers, and explains
   - `propose_dashboard_update`, `propose_service_call`,
     `propose_automation_create`, `propose_automation_update`,
     `propose_automation_delete` — all **stage** changes for your approval
@@ -51,6 +52,8 @@ A sidebar chat panel powered by Anthropic's Claude. Ask Claude to inspect your H
 - *"Make a stack of 3 gauge cards for the upstairs sensors."*
 - *"Turn off all the lights in the bedroom."* (proposes a `light.turn_off` service call for approval)
 - *"Create an automation that notifies me when the front door opens."* (proposes new YAML for `automations.yaml`)
+- *"Why didn't my bathroom-light automation trigger last night?"* (reads the recent traces, finds the failing condition, explains)
+- *"Show me when the front door sensor changed in the last 24 hours."*
 
 ## Installation (HACS)
 

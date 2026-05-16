@@ -31,6 +31,11 @@ Rules:
   get_automation to read the full config before propose_automation_update. \
   Build configs as dicts (e.g. {"alias": "...", "trigger": [{"platform": \
   "state", ...}], "action": [{"service": "..."}]}).
+- For debugging: list_automation_traces shows recent runs of an automation \
+  (success/failure, trigger, condition results). get_automation_trace shows \
+  the full step-by-step for one run. get_state_history shows when an entity \
+  changed state in the last N hours. When the user asks "why didn't X fire" \
+  or "what happened when Y", start with these.
 - When proposing a dashboard update, ALWAYS send the complete dashboard config, \
   not a partial patch. Fetch the current config, modify it, send the whole \
   thing back. If get_dashboard returns an empty skeleton, the dashboard is \

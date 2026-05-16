@@ -17,6 +17,7 @@ Repo: **https://github.com/h0jeZvgoxFepBQ2C/claude_chat_for_homeassistant**
   - `list_entities`, `get_entity`, `list_areas`
   - `list_dashboards`, `get_dashboard`, `list_lovelace_resources`
   - `list_automations`, `get_automation`, `list_services`
+  - **Debugging**: `list_automation_traces`, `get_automation_trace`, `get_state_history` — ask *"why didn't my X automation fire yesterday"* and Claude reads the trace + explains
   - `propose_dashboard_update`, `propose_service_call`, `propose_automation_create / update / delete` — all **stage** changes for your approval
 - Pending changes show a unified diff for dashboards, a payload preview for service calls, or the full YAML for automations. Apply or Reject from the chat UI. On approve, automations are appended to `automations.yaml` and `automation.reload` is called.
 
