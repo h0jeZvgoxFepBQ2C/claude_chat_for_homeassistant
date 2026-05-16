@@ -1,6 +1,7 @@
 """Claude Chat integration for Home Assistant."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 
@@ -61,6 +62,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Static frontend assets + user-uploaded image storage.
     frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
+    panel_js_path = os.path.join(frontend_dir, FRONTEND_SCRIPT)
+    asset_hash = await hass.async_add_executor_job(_asset_hash, panel_js_path)
     await hass.async_add_executor_job(ensure_media_root, hass)
     await hass.http.async_register_static_paths(
         [
@@ -69,7 +72,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ]
     )
 
-    # Sidebar panel
+    # Sidebar panel. We append ?v=<sha-prefix> so that whenever the JS
+    # changes, the browser / service worker / HA-companion WebView see a
+    # different URL and fetch the new file — otherwise old code can stick
+    # in caches even after HACS updates the file on disk.
     async_register_built_in_panel(
         hass,
         component_name="custom",
@@ -81,7 +87,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "name": "claude-chat-panel",
                 "embed_iframe": False,
                 "trust_external": False,
-                "module_url": f"{FRONTEND_URL}/{FRONTEND_SCRIPT}",
+                "module_url": f"{FRONTEND_URL}/{FRONTEND_SCRIPT}?v={asset_hash}",
             }
         },
         require_admin=True,
@@ -94,6 +100,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload integration on options change."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _asset_hash(path: str) -> str:
+    """SHA-256 prefix of a file's bytes — used as a cache-busting URL param."""
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+    except OSError:
+        return "0"
+    return h.hexdigest()[:10]
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
