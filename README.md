@@ -10,9 +10,6 @@ A sidebar chat panel powered by Anthropic's Claude. Ask Claude to inspect your H
 
 ## Screenshots
 
-**Empty state with example prompts and model picker**
-![empty state](screenshots/02_panel_empty.png)
-
 **Asking about sensors — markdown tables, collapsible tool calls, auto-titled sessions**
 ![sensor query](screenshots/03_sensor_query.png)
 
