@@ -298,11 +298,17 @@ async def ws_approve_change(
     if change is None:
         connection.send_error(msg["id"], "not_found", "Change not found")
         return
+    if change.status != "pending":
+        connection.send_error(
+            msg["id"], "already_resolved",
+            f"This change is already {change.status}",
+        )
+        return
     result = await tools.apply_pending_change(change)
     if "error" in result:
         connection.send_error(msg["id"], "apply_failed", result["error"])
         return
-    await store.remove_pending(msg["session_id"], msg["change_id"])
+    await store.set_change_status(msg["session_id"], msg["change_id"], "accepted")
     connection.send_result(msg["id"], {"ok": True, "result": result})
 
 
@@ -317,5 +323,7 @@ async def ws_approve_change(
 async def ws_reject_change(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
 ) -> None:
-    await _store(hass).remove_pending(msg["session_id"], msg["change_id"])
+    await _store(hass).set_change_status(
+        msg["session_id"], msg["change_id"], "rejected"
+    )
     connection.send_result(msg["id"], {"ok": True})

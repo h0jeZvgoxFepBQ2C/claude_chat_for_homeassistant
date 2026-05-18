@@ -131,4 +131,7 @@ async def test_reject_change(hass, hass_ws_client, configured_entry):
     )
     res = await client.receive_json()
     assert res["success"]
-    assert store.get_or_raise(session.id).pending_changes == []
+    # Rejected changes stay as history (status="rejected") rather than vanish.
+    changes = store.get_or_raise(session.id).pending_changes
+    assert len(changes) == 1
+    assert changes[0].status == "rejected"

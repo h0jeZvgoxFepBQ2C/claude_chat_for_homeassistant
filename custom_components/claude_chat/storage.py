@@ -21,7 +21,13 @@ class Message:
 
 @dataclass
 class PendingChange:
-    """A staged change awaiting user approval (e.g. dashboard edit)."""
+    """A staged change. Stays in the session as history after the user acts.
+
+    status:
+      - "pending"  — awaiting Apply / Reject (initial state)
+      - "accepted" — user clicked Apply and it succeeded
+      - "rejected" — user clicked Reject
+    """
 
     id: str
     kind: str
@@ -33,6 +39,7 @@ class PendingChange:
     # tool_use block in the chat — so a new proposal lands at the bottom,
     # not at the top of the chat.
     source_tool_use_id: str | None = None
+    status: str = "pending"
 
 
 @dataclass
@@ -99,7 +106,7 @@ class SessionStore:
                 "created_at": s.created_at,
                 "updated_at": s.updated_at,
                 "message_count": len(s.messages),
-                "has_pending": bool(s.pending_changes),
+                "has_pending": any(c.status == "pending" for c in s.pending_changes),
             }
             for s in sessions
         ]
@@ -149,4 +156,16 @@ class SessionStore:
                 removed = session.pending_changes.pop(i)
                 await self.async_save()
                 return removed
+        return None
+
+    async def set_change_status(
+        self, session_id: str, change_id: str, status: str
+    ) -> PendingChange | None:
+        """Mark a change as accepted / rejected without removing it."""
+        session = self.get_or_raise(session_id)
+        for change in session.pending_changes:
+            if change.id == change_id:
+                change.status = status
+                await self.async_save()
+                return change
         return None

@@ -34,6 +34,11 @@ Rules:
   Never tell the user to "reject the old one first" or "ablehnen Sie die \
   alte Version" — that just confuses them. Just say what changed and ask \
   them to review.
+- You DON'T have direct visibility into which past proposals the user has \
+  already approved or rejected — they may have clicked Apply or Reject \
+  without telling you. If you're unsure whether something is still pending, \
+  ASK the user ("hast du die Änderung schon bestätigt?") rather than \
+  confidently telling them to "just confirm everything".
 - For automations: use list_automations to find an automation_id, then \
   get_automation to read the full config before propose_automation_update. \
   Build configs as dicts (e.g. {"alias": "...", "trigger": [{"platform": \

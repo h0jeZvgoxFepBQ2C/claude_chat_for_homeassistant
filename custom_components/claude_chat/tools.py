@@ -305,16 +305,18 @@ class ToolRegistry:
     async def _add_pending_supersede(
         self, session_id: str, change: PendingChange
     ) -> None:
-        """Add a pending change, dropping earlier ones with the same target.
-
-        This means a follow-up proposal for the same dashboard / automation /
-        service call automatically replaces the previous proposal — the user
-        only ever sees one Apply / Reject for any given target.
+        """Add a pending change, dropping earlier *still-pending* ones with
+        the same target. Accepted / rejected history entries are kept so
+        the conversation transcript stays complete.
         """
         session = self.store.get(session_id)
         if session is not None:
             new_key = _target_key(change)
-            stale = [c.id for c in session.pending_changes if _target_key(c) == new_key]
+            stale = [
+                c.id
+                for c in session.pending_changes
+                if c.status == "pending" and _target_key(c) == new_key
+            ]
             for cid in stale:
                 await self.store.remove_pending(session_id, cid)
         await self.store.add_pending(session_id, change)

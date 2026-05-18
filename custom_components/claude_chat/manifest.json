@@ -10,5 +10,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/h0jeZvgoxFepBQ2C/claude_chat_for_homeassistant/issues",
   "requirements": ["anthropic>=0.40.0"],
-  "version": "0.2.2"
+  "version": "0.3.0"
 }

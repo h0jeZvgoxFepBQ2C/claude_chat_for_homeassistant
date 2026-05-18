@@ -332,6 +332,24 @@ const STYLES = `
     font-style: italic;
     margin-top: 4px;
   }
+  .pending-card.accepted {
+    border-color: var(--success-color, #4caf50);
+    background: var(--secondary-background-color);
+  }
+  .pending-card.accepted h3 {
+    color: var(--success-color, #4caf50);
+  }
+  .pending-card.accepted .actions { display: none; }
+  .pending-card.rejected {
+    border-color: var(--divider-color);
+    background: var(--secondary-background-color);
+    opacity: 0.7;
+  }
+  .pending-card.rejected h3 {
+    color: var(--secondary-text-color);
+    text-decoration: line-through;
+  }
+  .pending-card.rejected .actions { display: none; }
 
   /* ===== Composer ===== */
   .composer {
@@ -1209,7 +1227,12 @@ class ClaudeChatPanel extends HTMLElement {
 
   _renderPendingChange(container, change) {
     const el = document.createElement("div");
-    el.className = "pending-card" + (change._superseded ? " superseded" : "");
+    const status = change.status || "pending";
+    const stateClass =
+      status === "accepted" ? " accepted"
+      : status === "rejected" ? " rejected"
+      : (change._superseded ? " superseded" : "");
+    el.className = "pending-card" + stateClass;
     let body;
     const p = change.payload || {};
     if (change.kind === "service_call") {
@@ -1231,20 +1254,27 @@ class ClaudeChatPanel extends HTMLElement {
     } else {
       body = "";
     }
-    const supersededLabel = change._superseded
-      ? '<div class="superseded-label">Superseded by a newer proposal below — act on that one instead.</div>'
-      : "";
+    const statusLabel =
+      status === "accepted" ? '<div class="superseded-label">✓ Applied</div>'
+      : status === "rejected" ? '<div class="superseded-label">✗ Rejected</div>'
+      : change._superseded
+        ? '<div class="superseded-label">Superseded by a newer proposal below — act on that one instead.</div>'
+        : "";
+    const heading =
+      status === "accepted" ? `✓ ${labelForKind(change.kind)} — applied`
+      : status === "rejected" ? `✗ ${labelForKind(change.kind)} — rejected`
+      : `⚠ ${labelForKind(change.kind)}`;
     el.innerHTML = `
-      <h3>⚠ ${labelForKind(change.kind)}</h3>
+      <h3>${heading}</h3>
       <p>${escapeHtml(change.summary)}</p>
       ${body}
-      ${supersededLabel}
+      ${statusLabel}
       <div class="actions">
         <button class="primary approve">Apply</button>
         <button class="reject">Reject</button>
       </div>
     `;
-    if (!change._superseded) {
+    if (status === "pending" && !change._superseded) {
       el.querySelector(".approve").addEventListener("click", () =>
         this._approveChange(change.id)
       );
