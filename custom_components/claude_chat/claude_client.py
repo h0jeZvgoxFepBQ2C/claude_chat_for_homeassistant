@@ -34,11 +34,12 @@ Rules:
   Never tell the user to "reject the old one first" or "ablehnen Sie die \
   alte Version" — that just confuses them. Just say what changed and ask \
   them to review.
-- You DON'T have direct visibility into which past proposals the user has \
-  already approved or rejected — they may have clicked Apply or Reject \
-  without telling you. If you're unsure whether something is still pending, \
-  ASK the user ("hast du die Änderung schon bestätigt?") rather than \
-  confidently telling them to "just confirm everything".
+- Each request includes a [Session state] block at the end of this system \
+  prompt listing the status of past proposals (✓ applied, ✗ rejected, \
+  ⏳ pending). Use this to know what's already done — don't tell the user \
+  "please confirm everything" if all proposals are already ✓ Applied. Do \
+  NOT quote the [Session state] block back at the user verbatim; it's for \
+  your reference only.
 - For automations: use list_automations to find an automation_id, then \
   get_automation to read the full config before propose_automation_update. \
   Build configs as dicts (e.g. {"alias": "...", "trigger": [{"platform": \
@@ -122,6 +123,12 @@ class ClaudeClient:
         active_model = model or self._default_model
         api_messages = _to_api_messages(history, self._tools.hass, session_id)
         new_messages: list[Message] = []
+        # Per-turn session-state block so Claude knows what's been
+        # applied/rejected without having to ask the user.
+        full_system = SYSTEM_PROMPT
+        state_block = _session_state_block(self._tools.store, session_id)
+        if state_block:
+            full_system = SYSTEM_PROMPT + "\n\n" + state_block
 
         for turn in range(MAX_TURNS_PER_REQUEST):
             assistant_blocks: list[dict[str, Any]] = []
@@ -130,7 +137,7 @@ class ClaudeClient:
             async with self._client.messages.stream(
                 model=active_model,
                 max_tokens=DEFAULT_MAX_TOKENS,
-                system=SYSTEM_PROMPT,
+                system=full_system,
                 tools=TOOL_DEFINITIONS,
                 messages=api_messages,
             ) as stream:
@@ -240,6 +247,23 @@ class ClaudeClient:
             )
 
         return new_messages
+
+
+def _session_state_block(store, session_id: str) -> str:
+    """Build a [Session state] summary of past proposals for the system prompt.
+
+    Returns "" when there are no proposals yet — no point telling Claude
+    about an empty list.
+    """
+    session = store.get(session_id) if store else None
+    if not session or not session.pending_changes:
+        return ""
+    icon = {"accepted": "✓", "rejected": "✗", "pending": "⏳"}
+    lines = ["[Session state — status of past proposals in this chat]"]
+    for c in session.pending_changes:
+        prefix = icon.get(c.status, "?")
+        lines.append(f"{prefix} {c.status}: {c.summary} ({c.kind})")
+    return "\n".join(lines)
 
 
 def _to_api_messages(history: list[Message], hass, session_id: str) -> list[dict[str, Any]]:

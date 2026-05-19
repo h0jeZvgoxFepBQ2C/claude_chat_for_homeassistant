@@ -87,6 +87,42 @@ async def test_supersede_skips_non_pending_history(setup):
     assert len(session.pending_changes) == 2
 
 
+async def test_session_state_block_summarises_statuses(setup):
+    """The block injected into Claude's system prompt should list past
+    proposals with their statuses — so Claude doesn't ask the user
+    about something already accepted."""
+    from custom_components.claude_chat.claude_client import _session_state_block
+
+    _, store, sid = setup
+    await store.add_pending(
+        sid,
+        PendingChange(id="a", kind="dashboard_update", summary="add gauge", payload={}),
+    )
+    await store.set_change_status(sid, "a", "accepted")
+    await store.add_pending(
+        sid,
+        PendingChange(id="b", kind="automation_create", summary="sunset notification", payload={}),
+    )
+    await store.set_change_status(sid, "b", "rejected")
+    await store.add_pending(
+        sid,
+        PendingChange(id="c", kind="dashboard_update", summary="add chart", payload={}),
+    )
+
+    text = _session_state_block(store, sid)
+    assert "[Session state" in text
+    assert "✓ accepted: add gauge" in text
+    assert "✗ rejected: sunset notification" in text
+    assert "⏳ pending: add chart" in text
+
+
+async def test_session_state_block_empty_for_clean_session(setup):
+    from custom_components.claude_chat.claude_client import _session_state_block
+
+    _, store, sid = setup
+    assert _session_state_block(store, sid) == ""
+
+
 async def test_list_sessions_has_pending_only_counts_pending(setup, hass):
     _, store, sid = setup
     await store.add_pending(
