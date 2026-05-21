@@ -222,7 +222,8 @@ const STYLES = `
   /* ===== Tool calls ===== */
   .tool-call-row {
     display: flex;
-    align-items: flex-start;
+    align-self: flex-start;
+    max-width: 100%;
   }
   .tool-call {
     max-width: min(360px, 100%);
