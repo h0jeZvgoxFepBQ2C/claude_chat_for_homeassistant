@@ -310,6 +310,12 @@ const STYLES = `
     white-space: pre-wrap;
   }
   .pending-card .actions { display: flex; gap: 8px; }
+  .pending-card .actions button {
+    /* Suppress iOS WebView's 300ms tap-delay and double-tap zoom so
+       Apply / Reject feel instant on touch devices. */
+    touch-action: manipulation;
+    min-height: 40px; /* easier mobile tap target */
+  }
   .pending-card .reject {
     background: transparent;
     color: var(--primary-text-color);
