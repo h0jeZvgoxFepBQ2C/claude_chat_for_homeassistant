@@ -111,6 +111,22 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_dashboard_view",
+        "description": (
+            "Fetch a single view from a Lovelace dashboard by its path. "
+            "Much cheaper than get_dashboard for large dashboards. "
+            "Use get_dashboard(summary=true) first to discover view paths."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url_path": {"type": "string", "default": "lovelace"},
+                "view_path": {"type": "string"},
+            },
+            "required": ["view_path"],
+        },
+    },
+    {
         "name": "list_lovelace_resources",
         "description": (
             "List custom Lovelace cards/modules installed on this HA. "
@@ -228,16 +244,40 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "Propose a new full Lovelace dashboard config. This does NOT apply "
             "immediately — it stages a pending change that the user reviews "
             "and approves in the chat UI. Always fetch the current dashboard "
-            "with get_dashboard first, then send the complete modified config."
+            "with get_dashboard first, then send the complete modified config. "
+            "Pass the original config you fetched as `current_config` so the "
+            "diff can be generated without an extra storage round-trip."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "url_path": {"type": "string", "default": "lovelace"},
+                "current_config": {"type": "object", "description": "The config you fetched with get_dashboard — used for diff generation, avoids a second fetch"},
                 "new_config": {"type": "object"},
                 "summary": {"type": "string"},
             },
             "required": ["new_config", "summary"],
+        },
+    },
+    {
+        "name": "propose_dashboard_view_update",
+        "description": (
+            "Propose updating a single view in a Lovelace dashboard. "
+            "Use this instead of propose_dashboard_update when the dashboard "
+            "is large — it only requires the new config for one view, not the "
+            "whole dashboard (avoids output-token limits). "
+            "Use get_dashboard(summary=true) to find view paths, then "
+            "get_dashboard_view to fetch the current view before modifying it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url_path": {"type": "string", "default": "lovelace"},
+                "view_path": {"type": "string", "description": "Path of the view to update (e.g. 'home', 'default_view')"},
+                "new_view": {"type": "object", "description": "Complete new config for this single view"},
+                "summary": {"type": "string"},
+            },
+            "required": ["view_path", "new_view", "summary"],
         },
     },
     {
@@ -475,6 +515,21 @@ class ToolRegistry:
             return {"url_path": url_path, "summary": _dashboard_summary(config)}
         return {"url_path": url_path, "config": config}
 
+    async def _tool_get_dashboard_view(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        url_path = args.get("url_path", "lovelace")
+        view_path = args["view_path"]
+        config = await self._load_dashboard_config(url_path)
+        if config is None:
+            return {"error": f"Dashboard not found: {url_path}"}
+        view = next((v for v in config.get("views", []) if v.get("path") == view_path), None)
+        if view is None:
+            available = [v.get("path") for v in config.get("views", [])]
+            return {"error": f"View not found: {view_path!r}", "available_paths": available}
+        return {"url_path": url_path, "view_path": view_path, "view": view}
+
+
     async def _tool_propose_dashboard_update(
         self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
@@ -494,13 +549,56 @@ class ToolRegistry:
                 )
             }
 
-        current = await self._load_dashboard_config(url_path) or {}
-        diff = _format_diff(current, new_config)
+        # Use the config Claude already fetched if provided; only fall back to
+        # a storage reload when it's absent (e.g. direct API calls in tests).
+        current_config = args.get("current_config")
+        if current_config is None:
+            current_config = await self._load_dashboard_config(url_path) or {}
+        diff = _format_diff(current_config, new_config)
         change = PendingChange(
             id=uuid.uuid4().hex,
             kind="dashboard_update",
             summary=summary,
             payload={"url_path": url_path, "new_config": new_config},
+            diff=diff,
+            source_tool_use_id=tool_use_id,
+        )
+        await self._add_pending_supersede(session_id, change)
+        return {
+            "pending_change_id": change.id,
+            "summary": summary,
+            "status": "awaiting_user_approval",
+        }
+
+    async def _tool_propose_dashboard_view_update(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        url_path = args.get("url_path", "lovelace")
+        view_path = args["view_path"]
+        new_view = args["new_view"]
+        summary = args["summary"]
+
+        dashboards = self._lovelace_dashboards()
+        info = dashboards.get(url_path)
+        if not info:
+            return {"error": f"Dashboard not found: {url_path}"}
+        if info["mode"] != "storage":
+            return {"error": f"Dashboard '{url_path}' is in {info['mode']} mode and cannot be edited programmatically."}
+
+        current = await self._load_dashboard_config(url_path) or {}
+        views = list(current.get("views", []))
+        idx = next((i for i, v in enumerate(views) if v.get("path") == view_path), None)
+        if idx is None:
+            available = [v.get("path") for v in views]
+            return {"error": f"View not found: {view_path!r}", "available_paths": available}
+
+        new_full_config = {**current, "views": views[:idx] + [new_view] + views[idx + 1:]}
+        diff = _format_diff(current, new_full_config)
+        change = PendingChange(
+            id=uuid.uuid4().hex,
+            kind="dashboard_update",
+            summary=summary,
+            payload={"url_path": url_path, "new_config": new_full_config},
             diff=diff,
             source_tool_use_id=tool_use_id,
         )

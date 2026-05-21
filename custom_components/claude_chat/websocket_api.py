@@ -7,12 +7,14 @@ Commands:
   claude_chat/delete_session
   claude_chat/rename_session
   claude_chat/send_message      (subscription — streams events)
+  claude_chat/abort             (cancel an in-progress stream)
   claude_chat/approve_change
   claude_chat/reject_change
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import asdict
 from typing import Any
 
@@ -26,6 +28,23 @@ from .media import delete_session_media, save_image
 from .storage import Message, SessionStore
 from .tools import ToolRegistry, automations_include_configured
 
+_LOGGER = logging.getLogger(__name__)
+
+# One in-flight asyncio.Task per session_id. A new send_message cancels any
+# existing task for the same session before starting, preventing interleaved
+# message appends when the user stops mid-stream and immediately retries.
+_inflight: dict[str, asyncio.Task] = {}
+
+
+async def _cancel_inflight(session_id: str) -> None:
+    task = _inflight.pop(session_id, None)
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
 
 def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_list_sessions)
@@ -34,6 +53,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_delete_session)
     websocket_api.async_register_command(hass, ws_rename_session)
     websocket_api.async_register_command(hass, ws_send_message)
+    websocket_api.async_register_command(hass, ws_abort)
     websocket_api.async_register_command(hass, ws_approve_change)
     websocket_api.async_register_command(hass, ws_reject_change)
     websocket_api.async_register_command(hass, ws_list_models)
@@ -195,6 +215,10 @@ async def ws_send_message(
         connection.send_error(msg["id"], "empty_message", "Provide text or an image")
         return
 
+    # Cancel any stream already running for this session so its messages don't
+    # interleave with ours in the store.
+    await _cancel_inflight(session.id)
+
     user_message = Message(role="user", content=content_blocks)
     await store.append_message(session.id, user_message)
     connection.send_result(msg["id"], {"streaming": True})
@@ -208,32 +232,35 @@ async def ws_send_message(
     async def emit(event: dict[str, Any]) -> None:
         emit_sync(event)
 
-    try:
-        new_messages = await client.stream_chat(
-            history=session.messages,
-            session_id=session.id,
-            emit=emit,
-            model=msg.get("model"),
-        )
-        for m in new_messages:
-            await store.append_message(session.id, m)
+    async def _run() -> None:
+        try:
+            new_messages = await client.stream_chat(
+                history=session.messages,
+                session_id=session.id,
+                emit=emit,
+                model=msg.get("model"),
+            )
+            for m in new_messages:
+                await store.append_message(session.id, m)
 
-        if is_first_user_message:
-            title = await client.summarize_title(user_text)
-            if title:
-                await store.rename(session.id, title)
+            if is_first_user_message:
+                title = await client.summarize_title(user_text)
+                if title:
+                    await store.rename(session.id, title)
 
-        refreshed = store.get_or_raise(session.id)
-        await emit(
-            {
-                "type": "done",
-                "session": _serialize_session(refreshed),
-            }
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as err:  # noqa: BLE001
-        await emit({"type": "error", "error": str(err)})
+            refreshed = store.get_or_raise(session.id)
+            await emit({"type": "done", "session": _serialize_session(refreshed)})
+        except asyncio.CancelledError:
+            # Stream was aborted — drop partial messages, don't corrupt store.
+            _LOGGER.debug("Stream cancelled for session %s", session.id)
+            raise
+        except Exception as err:  # noqa: BLE001
+            await emit({"type": "error", "error": str(err)})
+        finally:
+            _inflight.pop(session.id, None)
+
+    task = asyncio.ensure_future(_run())
+    _inflight[session.id] = task
 
 
 @websocket_api.websocket_command({vol.Required("type"): "claude_chat/list_models"})
@@ -273,6 +300,23 @@ async def ws_diagnostics(
             ),
         },
     )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "claude_chat/abort",
+        vol.Required("session_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_abort(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+) -> None:
+    await _cancel_inflight(msg["session_id"])
+    # Return the current session state so the frontend can re-render cleanly.
+    session = _store(hass).get(msg["session_id"])
+    result = _serialize_session(session) if session else {}
+    connection.send_result(msg["id"], {"ok": True, "session": result})
 
 
 @websocket_api.websocket_command(

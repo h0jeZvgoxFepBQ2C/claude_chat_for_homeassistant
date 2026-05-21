@@ -711,8 +711,24 @@ class ClaudeChatPanel extends HTMLElement {
       this._unsubStream = null;
     }
     this._finishStreaming();
-    // Re-fetch the session so the server-side state (which kept appending) shows up.
-    if (this._activeSessionId) this._selectSession(this._activeSessionId);
+    // Tell the backend to cancel the inflight stream and return clean state.
+    // Using send_message (fire-and-forget) because we only need the result to re-render.
+    if (this._activeSessionId && this._hass) {
+      this._hass.connection.sendMessagePromise({
+        type: "claude_chat/abort",
+        session_id: this._activeSessionId,
+      }).then(result => {
+        if (result.session) {
+          this._activeSession = result.session;
+          this._renderChat();
+          this._renderSidebar();
+          this._renderHeader();
+        }
+      }).catch(() => {
+        // Fallback: just re-fetch if abort command fails (older backend).
+        this._selectSession(this._activeSessionId);
+      });
+    }
   }
 
   _onStreamEvent(event) {

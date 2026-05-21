@@ -53,10 +53,14 @@ Rules:
   the full step-by-step for one run. get_state_history shows when an entity \
   changed state in the last N hours. When the user asks "why didn't X fire" \
   or "what happened when Y", start with these.
-- When proposing a dashboard update, ALWAYS send the complete dashboard config, \
-  not a partial patch. Fetch the current config, modify it, send the whole \
-  thing back. If get_dashboard returns an empty skeleton, the dashboard is \
-  auto-generated and your save will create it.
+- When proposing a dashboard change, ALWAYS use propose_dashboard_view_update \
+  (not propose_dashboard_update). Call get_dashboard(summary=true) to see \
+  view paths, then get_dashboard_view to fetch the single view to modify, \
+  then propose_dashboard_view_update with only that view. The backend merges \
+  it into the full config at apply time — you never need to output the full \
+  dashboard. Only use propose_dashboard_update for a brand-new \
+  auto-generated dashboard that has no stored config yet (get_dashboard \
+  returns an empty skeleton).
 - Prefer minimal changes. If the user asks for "a widget for sensor X", add \
   one card to the appropriate view, don't restructure the dashboard.
 - Be concise. Don't narrate every tool call — just do them and report the \
@@ -309,16 +313,56 @@ def _session_state_block(store, session_id: str) -> str:
 def _to_api_messages(history: list[Message], hass, session_id: str) -> list[dict[str, Any]]:
     """Convert stored messages to Anthropic-API shape.
 
-    User messages may contain `image_ref` blocks that point at files on
-    disk. We read + base64-encode them here so the API sees them as
-    standard `image` content blocks.
+    Also deduplicates large tool results: if get_dashboard is called multiple
+    times for the same url_path, only the most recent full-config result is
+    kept — earlier ones are replaced with a stub to reduce context size.
     """
+    import json as _json
+
     out = []
     for m in history:
         content = m.content
         if any(b.get("type") == "image_ref" for b in content):
             content = to_api_content(hass, session_id, content)
         out.append({"role": m.role, "content": content})
+
+    # Build tool_use_id → tool_name map from all assistant messages.
+    id_to_name: dict[str, str] = {}
+    for entry in out:
+        if entry["role"] == "assistant":
+            for b in entry["content"]:
+                if isinstance(b, dict) and b.get("type") == "tool_use":
+                    id_to_name[b["id"]] = b["name"]
+
+    # Find all get_dashboard (full-config) tool_result positions keyed by url_path.
+    # Structure: url_path -> list of (out_index, block_index)
+    dashboard_positions: dict[str, list[tuple[int, int]]] = {}
+    for i, entry in enumerate(out):
+        if entry["role"] != "user":
+            continue
+        for j, b in enumerate(entry["content"]):
+            if not isinstance(b, dict) or b.get("type") != "tool_result":
+                continue
+            if id_to_name.get(b.get("tool_use_id", "")) != "get_dashboard":
+                continue
+            try:
+                parsed = _json.loads(b.get("content", "{}"))
+            except (_json.JSONDecodeError, TypeError):
+                continue
+            if "config" not in parsed:  # skip summary=true results
+                continue
+            url_path = parsed.get("url_path", "")
+            dashboard_positions.setdefault(url_path, []).append((i, j))
+
+    # Replace all but the last occurrence with a lightweight stub.
+    for positions in dashboard_positions.values():
+        for (i, j) in positions[:-1]:
+            # Build new content list and entry to avoid mutating shared Message objects.
+            old_entry = out[i]
+            new_blocks = list(old_entry["content"])
+            new_blocks[j] = {**new_blocks[j], "content": '{"note":"earlier fetch superseded"}'}
+            out[i] = {"role": old_entry["role"], "content": new_blocks}
+
     return out
 
 
