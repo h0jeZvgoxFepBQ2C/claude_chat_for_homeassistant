@@ -127,12 +127,24 @@ class ClaudeClient:
         active_model = model or self._default_model
         api_messages = _to_api_messages(history, self._tools.hass, session_id)
         new_messages: list[Message] = []
-        # Per-turn session-state block so Claude knows what's been
-        # applied/rejected without having to ask the user.
-        full_system = SYSTEM_PROMPT
+
+        # Build system prompt — SYSTEM_PROMPT is static so it gets a cache
+        # breakpoint; the session-state block (dynamic) goes in a second block
+        # after the cache marker so the cache hit still applies to the static part.
+        system_blocks: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
         state_block = _session_state_block(self._tools.store, session_id)
         if state_block:
-            full_system = SYSTEM_PROMPT + "\n\n" + state_block
+            system_blocks.append({"type": "text", "text": state_block})
+
+        # Mark the last tool definition so the entire tool list is cached.
+        tools_with_cache = [*TOOL_DEFINITIONS]
+        tools_with_cache[-1] = {**tools_with_cache[-1], "cache_control": {"type": "ephemeral"}}
 
         for turn in range(MAX_TURNS_PER_REQUEST):
             assistant_blocks: list[dict[str, Any]] = []
@@ -141,8 +153,8 @@ class ClaudeClient:
             async with self._client.messages.stream(
                 model=active_model,
                 max_tokens=DEFAULT_MAX_TOKENS,
-                system=full_system,
-                tools=TOOL_DEFINITIONS,
+                system=system_blocks,
+                tools=tools_with_cache,
                 messages=api_messages,
             ) as stream:
                 current_block_index: int | None = None
@@ -207,9 +219,33 @@ class ClaudeClient:
                     elif etype == "message_stop":
                         pass
 
+            # If truncated mid-block, flush any completed text so it's saved,
+            # but drop partial tool_use blocks (the tool was never called).
+            if current_block is not None:
+                if current_block["type"] == "text" and current_block.get("text"):
+                    assistant_blocks.append(current_block)
+                # Partial tool_use: discard — tool_use_start was already streamed
+                # to the frontend but the done-event re-render will clean it up.
+
             assistant_msg = Message(role="assistant", content=assistant_blocks)
             new_messages.append(assistant_msg)
             api_messages.append({"role": "assistant", "content": assistant_blocks})
+
+            if stop_reason == "max_tokens":
+                _LOGGER.warning(
+                    "Claude response truncated by max_tokens=%d on turn %d",
+                    DEFAULT_MAX_TOKENS,
+                    turn,
+                )
+                await emit({
+                    "type": "error",
+                    "error": (
+                        "Response truncated (max_tokens limit reached). "
+                        "Please try again — if this recurs, reduce the size of "
+                        "the request or contact support."
+                    ),
+                })
+                break
 
             if stop_reason != "tool_use":
                 await emit({"type": "turn_complete"})

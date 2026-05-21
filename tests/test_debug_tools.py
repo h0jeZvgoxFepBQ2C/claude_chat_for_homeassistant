@@ -63,7 +63,13 @@ async def test_get_trace_returns_full_detail(setup, hass):
         timestamp_start="2026-01-01T10:00:00",
         timestamp_finish="2026-01-01T10:00:01",
         as_short_dict=lambda: {"run_id": "r1"},
-        as_dict=lambda: {"run_id": "r1", "trigger": {...}, "actions": [{...}]},
+        as_extended_dict=lambda: {
+            "run_id": "r1",
+            "trigger": {},
+            "actions": [{}],
+            "config": {"alias": "big config"},
+            "blueprint_inputs": {"some": "data"},
+        },
     )
     hass.data[DATA_TRACE] = {"automation": {"abc": {"r1": fake_run}}}
 
@@ -74,6 +80,8 @@ async def test_get_trace_returns_full_detail(setup, hass):
     )
     assert "trace" in result
     assert result["trace"]["run_id"] == "r1"
+    assert "config" not in result["trace"], "config should be stripped to save tokens"
+    assert "blueprint_inputs" not in result["trace"]
 
 
 async def test_get_trace_missing(setup, hass):

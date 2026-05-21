@@ -72,6 +72,75 @@ def tool_use_event(
     return events
 
 
+def truncated_text_event(text: str) -> list[Any]:
+    """Simulates max_tokens hit after streaming text (no tool_use follows).
+
+    Mirrors the real-world failure mode where Claude says 'I'll add the card:'
+    then stops before calling propose_* because output budget is exhausted.
+    content_block_stop may or may not fire; we test the no-stop case (worst).
+    """
+    return [
+        N(
+            type="content_block_start",
+            index=0,
+            content_block=N(type="text", id=None, name=None),
+        ),
+        N(
+            type="content_block_delta",
+            index=0,
+            delta=N(type="text_delta", text=text),
+        ),
+        # Intentionally NO content_block_stop — max_tokens hit mid-stream.
+        N(type="message_delta", delta=N(stop_reason="max_tokens")),
+        N(type="message_stop"),
+    ]
+
+
+def truncated_mid_tool_use_event(
+    *,
+    preceding_text: str,
+    tool_id: str,
+    name: str,
+    partial_json: str = '{"url_path": "lovelace", "new_conf',
+) -> list[Any]:
+    """Simulates max_tokens hit while streaming a tool_use input.
+
+    The tool_use_start event fires (chip appears) but the block is never
+    completed — verifies that the partial block is discarded gracefully.
+    """
+    events: list[Any] = []
+    if preceding_text:
+        events += [
+            N(
+                type="content_block_start",
+                index=0,
+                content_block=N(type="text", id=None, name=None),
+            ),
+            N(
+                type="content_block_delta",
+                index=0,
+                delta=N(type="text_delta", text=preceding_text),
+            ),
+            N(type="content_block_stop", index=0),
+        ]
+    events += [
+        N(
+            type="content_block_start",
+            index=1,
+            content_block=N(type="tool_use", id=tool_id, name=name),
+        ),
+        N(
+            type="content_block_delta",
+            index=1,
+            delta=N(type="input_json_delta", partial_json=partial_json),
+        ),
+        # No content_block_stop — truncated mid-JSON.
+        N(type="message_delta", delta=N(stop_reason="max_tokens")),
+        N(type="message_stop"),
+    ]
+    return events
+
+
 class _FakeStreamCtx:
     def __init__(self, events: list[Any]) -> None:
         self._events = events

@@ -55,15 +55,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "list_entities",
         "description": (
-            "List Home Assistant entities. Optionally filter by domain "
-            "(e.g. 'sensor', 'light', 'binary_sensor') and/or area name. "
-            "Returns entity_id, friendly name, current state, and area."
+            "List Home Assistant entities. Filter by domain, area, label, and/or "
+            "a keyword search across entity_id and friendly name. Use filters to "
+            "keep results small — unfiltered results can be hundreds of entities."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "domain": {"type": "string", "description": "HA domain filter"},
+                "domain": {"type": "string", "description": "HA domain filter (e.g. 'sensor', 'light')"},
                 "area": {"type": "string", "description": "Area name filter"},
+                "label": {"type": "string", "description": "Filter by label (case-insensitive)"},
+                "search": {"type": "string", "description": "Keyword to match against entity_id and friendly name (case-insensitive)"},
                 "limit": {"type": "integer", "default": 200},
             },
         },
@@ -95,13 +97,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "get_dashboard",
         "description": (
-            "Fetch the config of a Lovelace dashboard by its url_path. "
-            "Use 'lovelace' for the default dashboard. Returns an empty "
-            "skeleton if the dashboard has no stored config yet."
+            "Fetch a Lovelace dashboard config by url_path. "
+            "Use summary=true first to see view titles and card counts cheaply; "
+            "only fetch the full config when you need to modify it. "
+            "Use 'lovelace' for the default dashboard."
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"url_path": {"type": "string", "default": "lovelace"}},
+            "properties": {
+                "url_path": {"type": "string", "default": "lovelace"},
+                "summary": {"type": "boolean", "default": False, "description": "Return only view titles and card counts instead of the full config"},
+            },
         },
     },
     {
@@ -118,10 +124,19 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "list_automations",
         "description": (
-            "List automations defined in HA. Returns entity_id, friendly "
-            "name, and current state (on/off)."
+            "List automations defined in HA. Returns entity_id, automation_id, "
+            "name, state (on/off), area, and labels. "
+            "Filter with `search` (name), `area` (area name), or `label`. "
+            "Call get_automation for the full config of a specific automation."
         ),
-        "input_schema": {"type": "object", "properties": {}},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search": {"type": "string", "description": "Keyword to filter by automation name (case-insensitive)"},
+                "area": {"type": "string", "description": "Filter by area name"},
+                "label": {"type": "string", "description": "Filter by label (case-insensitive)"},
+            },
+        },
     },
     {
         "name": "list_automation_traces",
@@ -143,10 +158,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "get_automation_trace",
         "description": (
-            "Get the full step-by-step trace of one automation execution: "
-            "triggers, conditions (with pass/fail results), actions (timing "
-            "and outputs), and any errors. Use this to debug why an "
-            "automation behaved a certain way."
+            "Get the step-by-step trace of one automation execution: "
+            "triggers, conditions (pass/fail), actions (timing, outputs), "
+            "and any errors. Use this to debug why an automation behaved a "
+            "certain way. The automation config is omitted (use get_automation "
+            "if you need it)."
         ),
         "input_schema": {
             "type": "object",
@@ -176,14 +192,34 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "list_services",
         "description": (
-            "List HA services. Optionally filter by domain (e.g. 'light', "
-            "'switch'). Returns domain, service name, and short description."
+            "List HA services — returns domain, service name, and a one-line "
+            "description only. Use `domain` and/or `search` to narrow results "
+            "(without filters the result can be thousands of entries). "
+            "Call get_service for the full parameter details of a specific service."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "domain": {"type": "string", "description": "Filter by service domain"},
+                "search": {"type": "string", "description": "Keyword to search in domain, service name, and description"},
+                "limit": {"type": "integer", "default": 100, "description": "Max services to return"},
             },
+        },
+    },
+    {
+        "name": "get_service",
+        "description": (
+            "Get full details for a single HA service: description, all accepted "
+            "fields with types, descriptions, and examples. Use this after "
+            "list_services to understand exactly what parameters a service expects."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "domain": {"type": "string"},
+                "service": {"type": "string"},
+            },
+            "required": ["domain", "service"],
         },
     },
     {
@@ -344,6 +380,8 @@ class ToolRegistry:
     ) -> dict[str, Any]:
         domain_filter = args.get("domain")
         area_filter = args.get("area")
+        label_filter = (args.get("label") or "").lower()
+        search = (args.get("search") or "").lower()
         limit = int(args.get("limit", 200))
 
         ent_reg = er.async_get(self.hass)
@@ -357,9 +395,13 @@ class ToolRegistry:
         for state in self.hass.states.async_all():
             if domain_filter and state.domain != domain_filter:
                 continue
+            if search and search not in state.entity_id.lower() and search not in state.name.lower():
+                continue
             entry = ent_reg.async_get(state.entity_id)
             entity_area_id = entry.area_id if entry else None
             if target_area_id and entity_area_id != target_area_id:
+                continue
+            if label_filter and label_filter not in {lbl.lower() for lbl in (entry.labels if entry else set())}:
                 continue
             area_name = None
             if entity_area_id:
@@ -429,6 +471,8 @@ class ToolRegistry:
         config = await self._load_dashboard_config(url_path)
         if config is None:
             return {"error": f"Dashboard not found: {url_path}"}
+        if args.get("summary"):
+            return {"url_path": url_path, "summary": _dashboard_summary(config)}
         return {"url_path": url_path, "config": config}
 
     async def _tool_propose_dashboard_update(
@@ -487,14 +531,42 @@ class ToolRegistry:
     async def _tool_list_automations(
         self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
+        search = (args.get("search") or "").lower()
+        area_filter = (args.get("area") or "").lower()
+        label_filter = (args.get("label") or "").lower()
+
+        ent_reg = er.async_get(self.hass)
+        area_reg = ar.async_get(self.hass)
+        area_id_by_name = {a.name.lower(): a.id for a in area_reg.async_list_areas()}
+
         result = []
         for state in self.hass.states.async_all("automation"):
+            if search and search not in state.name.lower():
+                continue
+            entry = ent_reg.async_get(state.entity_id)
+            entity_area_id = entry.area_id if entry else None
+            entity_labels = {lbl.lower() for lbl in (entry.labels if entry else set())}
+
+            if area_filter:
+                target_area_id = area_id_by_name.get(area_filter)
+                if entity_area_id != target_area_id:
+                    continue
+            if label_filter and label_filter not in entity_labels:
+                continue
+
+            area_name = None
+            if entity_area_id:
+                area_obj = area_reg.async_get_area(entity_area_id)
+                area_name = area_obj.name if area_obj else None
+
             result.append(
                 {
                     "entity_id": state.entity_id,
                     "automation_id": state.attributes.get("id"),
                     "name": state.name,
                     "state": state.state,
+                    "area": area_name,
+                    "labels": sorted(entry.labels) if entry else [],
                 }
             )
         return {"automations": result}
@@ -545,7 +617,12 @@ class ToolRegistry:
         )
         if trace is None:
             return {"error": f"Trace not found: {automation_id}/{run_id}"}
-        return {"trace": trace.as_dict()}
+        # Use the extended dict but strip the full automation config and
+        # blueprint_inputs — they're large and available via get_automation.
+        data = trace.as_extended_dict()
+        data.pop("config", None)
+        data.pop("blueprint_inputs", None)
+        return {"trace": data}
 
     async def _tool_get_state_history(
         self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
@@ -696,20 +773,35 @@ class ToolRegistry:
         self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
         domain_filter = args.get("domain")
+        search = (args.get("search") or "").lower()
+        limit = int(args.get("limit", 100))
         services = self.hass.services.async_services()
         result = []
         for domain, by_name in services.items():
             if domain_filter and domain != domain_filter:
                 continue
             for service_name, service in by_name.items():
-                result.append(
-                    {
-                        "domain": domain,
-                        "service": service_name,
-                        "description": getattr(service, "description", "") or "",
-                    }
-                )
-        return {"services": result, "count": len(result)}
+                description = getattr(service, "description", "") or ""
+                if search and search not in domain.lower() and search not in service_name.lower() and search not in description.lower():
+                    continue
+                result.append({"domain": domain, "service": service_name, "description": description})
+                if len(result) >= limit:
+                    return {"services": result, "count": len(result), "truncated": True}
+        return {"services": result, "count": len(result), "truncated": False}
+
+    async def _tool_get_service(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        from homeassistant.helpers.service import async_get_cached_service_description
+
+        domain = args["domain"]
+        service = args["service"]
+        if not self.hass.services.has_service(domain, service):
+            return {"error": f"Unknown service: {domain}.{service}"}
+        desc = async_get_cached_service_description(self.hass, domain, service)
+        if desc is None:
+            return {"domain": domain, "service": service, "fields": {}}
+        return {"domain": domain, "service": service, **desc}
 
     async def _tool_propose_service_call(
         self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
@@ -906,6 +998,21 @@ class ToolRegistry:
                 }
 
         return {"ok": True, "automation_id": ident, "kind": change.kind}
+
+
+def _dashboard_summary(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return a compact view-by-view summary: title, path, and card count."""
+    views = []
+    for view in config.get("views", []):
+        card_count = len(view.get("cards", []))
+        for section in view.get("sections", []):
+            card_count += len(section.get("cards", []))
+        views.append({
+            "title": view.get("title", ""),
+            "path": view.get("path", ""),
+            "card_count": card_count,
+        })
+    return views
 
 
 def _format_diff(old: Any, new: Any) -> str:
