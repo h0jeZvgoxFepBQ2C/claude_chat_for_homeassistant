@@ -598,7 +598,16 @@ class ToolRegistry:
             id=uuid.uuid4().hex,
             kind="dashboard_update",
             summary=summary,
-            payload={"url_path": url_path, "new_config": new_full_config},
+            # Store view_path + new_view so apply_pending_change can re-merge
+            # against the live config at approval time, preserving any changes
+            # to other views that happened between proposal and approval.
+            payload={
+                "url_path": url_path,
+                "view_path": view_path,
+                "new_view": new_view,
+                # new_config is still included for the diff display in the UI.
+                "new_config": new_full_config,
+            },
             diff=diff,
             source_tool_use_id=tool_use_id,
         )
@@ -1001,11 +1010,22 @@ class ToolRegistry:
         """Apply a previously-staged pending change."""
         if change.kind == "dashboard_update":
             url_path = change.payload["url_path"]
-            new_config = change.payload["new_config"]
             dashboards = self._lovelace_dashboards()
             info = dashboards.get(url_path)
             if not info:
                 return {"error": f"Dashboard gone: {url_path}"}
+            view_path = change.payload.get("view_path")
+            if view_path is not None:
+                # View-level proposal: re-merge against the live config so changes
+                # to other views that happened after the proposal are preserved.
+                live = await self._load_dashboard_config(url_path) or {}
+                views = list(live.get("views", []))
+                idx = next((i for i, v in enumerate(views) if v.get("path") == view_path), None)
+                if idx is None:
+                    return {"error": f"View {view_path!r} no longer exists in dashboard"}
+                new_config = {**live, "views": views[:idx] + [change.payload["new_view"]] + views[idx + 1:]}
+            else:
+                new_config = change.payload["new_config"]
             await info["store"].async_save(new_config)
             return {"ok": True, "url_path": url_path}
 
