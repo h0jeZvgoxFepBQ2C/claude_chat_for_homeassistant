@@ -220,18 +220,24 @@ const STYLES = `
   }
 
   /* ===== Tool calls ===== */
+  .tool-call-row {
+    display: flex;
+    align-items: flex-start;
+  }
   .tool-call {
-    align-self: flex-start;
-    max-width: 100%;
+    max-width: min(360px, 100%);
     background: var(--secondary-background-color);
     border-left: 3px solid var(--accent-color, #ff9800);
     border-radius: 6px;
     overflow: hidden;
   }
+  .tool-call.error {
+    border-left-color: var(--error-color, #f44336);
+  }
   .tool-call > summary {
     list-style: none;
     cursor: pointer;
-    padding: 8px 14px;
+    padding: 6px 12px;
     font-size: 12px;
     line-height: 1.5;
     color: var(--secondary-text-color);
@@ -239,7 +245,10 @@ const STYLES = `
     user-select: none;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .tool-call > summary::-webkit-details-marker { display: none; }
   .tool-call > summary::before {
@@ -801,13 +810,16 @@ class ClaudeChatPanel extends HTMLElement {
 
   _appendToolCall(name, id) {
     const messages = this.shadowRoot.querySelector(".messages");
+    const row = document.createElement("div");
+    row.className = "tool-call-row";
     const el = document.createElement("details");
     el.className = "tool-call";
     el.innerHTML = `
       <summary>🔧 ${escapeHtml(name)} <span class="status">…</span></summary>
       <div class="body"><em>running…</em></div>
     `;
-    messages.appendChild(el);
+    row.appendChild(el);
+    messages.appendChild(row);
     this._streamingToolCalls[id] = el;
     // Reset streaming bubble — text after a tool call goes into a new bubble.
     this._streamingMessageEl = null;
@@ -819,6 +831,7 @@ class ClaudeChatPanel extends HTMLElement {
     const el = this._streamingToolCalls[id];
     if (!el) return;
     const ok = !result?.error;
+    if (!ok) el.classList.add("error");
     const status = el.querySelector(".status");
     if (status) {
       status.textContent = ok ? "✓" : "✗";
@@ -1228,13 +1241,25 @@ class ClaudeChatPanel extends HTMLElement {
         row.appendChild(bubble);
         container.appendChild(row);
       } else if (block.type === "tool_use") {
+        // Find the matching tool_result in the next user message to determine success.
+        const toolOk = (() => {
+          const msgIdx = this._activeSession.messages.indexOf(msg);
+          const next = this._activeSession.messages[msgIdx + 1];
+          if (!next || next.role !== "user") return true;
+          const resultBlock = (next.content || []).find(b => b.type === "tool_result" && b.tool_use_id === block.id);
+          if (!resultBlock) return true;
+          try { return !JSON.parse(resultBlock.content)?.error; } catch { return true; }
+        })();
+        const row = document.createElement("div");
+        row.className = "tool-call-row";
         const el = document.createElement("details");
-        el.className = "tool-call";
+        el.className = "tool-call" + (toolOk ? "" : " error");
         el.innerHTML = `
-          <summary>🔧 ${escapeHtml(block.name)} <span class="status">✓</span></summary>
+          <summary>🔧 ${escapeHtml(block.name)} <span class="status" style="color:var(--${toolOk ? "success" : "error"}-color,${toolOk ? "#4caf50" : "#f44336"})">${toolOk ? "✓" : "✗"}</span></summary>
           <div class="body"><pre>${escapeHtml(JSON.stringify(block.input, null, 2))}</pre></div>
         `;
-        container.appendChild(el);
+        row.appendChild(el);
+        container.appendChild(row);
 
         // If this tool_use produced a pending change, render it right
         // after the tool chip so it lands at the right spot in the chat.

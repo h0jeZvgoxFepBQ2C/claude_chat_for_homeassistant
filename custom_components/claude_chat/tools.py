@@ -121,7 +121,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "url_path": {"type": "string", "default": "lovelace"},
-                "view_path": {"type": "string"},
+                "view_path": {"type": "string", "description": "Path of the view or its index as a string ('0', '1', …) — use the view_path from get_dashboard(summary=true)"},
             },
             "required": ["view_path"],
         },
@@ -273,7 +273,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "url_path": {"type": "string", "default": "lovelace"},
-                "view_path": {"type": "string", "description": "Path of the view to update (e.g. 'home', 'default_view')"},
+                "view_path": {"type": "string", "description": "Path of the view (e.g. 'home') or its index as a string ('0', '1', …) for views with no explicit path — use the view_path from get_dashboard(summary=true)"},
                 "new_view": {"type": "object", "description": "Complete new config for this single view"},
                 "summary": {"type": "string"},
             },
@@ -523,10 +523,10 @@ class ToolRegistry:
         config = await self._load_dashboard_config(url_path)
         if config is None:
             return {"error": f"Dashboard not found: {url_path}"}
-        view = next((v for v in config.get("views", []) if v.get("path") == view_path), None)
+        idx, view = _find_view(config.get("views", []), view_path)
         if view is None:
-            available = [v.get("path") for v in config.get("views", [])]
-            return {"error": f"View not found: {view_path!r}", "available_paths": available}
+            available = _dashboard_summary(config)
+            return {"error": f"View not found: {view_path!r}", "available_views": available}
         return {"url_path": url_path, "view_path": view_path, "view": view}
 
 
@@ -587,10 +587,9 @@ class ToolRegistry:
 
         current = await self._load_dashboard_config(url_path) or {}
         views = list(current.get("views", []))
-        idx = next((i for i, v in enumerate(views) if v.get("path") == view_path), None)
+        idx, _ = _find_view(views, view_path)
         if idx is None:
-            available = [v.get("path") for v in views]
-            return {"error": f"View not found: {view_path!r}", "available_paths": available}
+            return {"error": f"View not found: {view_path!r}", "available_views": _dashboard_summary(current)}
 
         new_full_config = {**current, "views": views[:idx] + [new_view] + views[idx + 1:]}
         diff = _format_diff(current, new_full_config)
@@ -1020,7 +1019,7 @@ class ToolRegistry:
                 # to other views that happened after the proposal are preserved.
                 live = await self._load_dashboard_config(url_path) or {}
                 views = list(live.get("views", []))
-                idx = next((i for i, v in enumerate(views) if v.get("path") == view_path), None)
+                idx, _ = _find_view(views, view_path)
                 if idx is None:
                     return {"error": f"View {view_path!r} no longer exists in dashboard"}
                 new_config = {**live, "views": views[:idx] + [change.payload["new_view"]] + views[idx + 1:]}
@@ -1119,18 +1118,38 @@ class ToolRegistry:
 
 
 def _dashboard_summary(config: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return a compact view-by-view summary: title, path, and card count."""
+    """Return a compact view-by-view summary: title, path/index, and card count."""
     views = []
-    for view in config.get("views", []):
+    for i, view in enumerate(config.get("views", [])):
         card_count = len(view.get("cards", []))
         for section in view.get("sections", []):
             card_count += len(section.get("cards", []))
+        path = view.get("path")
         views.append({
             "title": view.get("title", ""),
-            "path": view.get("path", ""),
+            # Use string index when the view has no explicit path so
+            # get_dashboard_view / propose_dashboard_view_update can still
+            # target it (pass "0", "1", etc. as view_path).
+            "view_path": path if path is not None else str(i),
+            "has_explicit_path": path is not None,
             "card_count": card_count,
         })
     return views
+
+
+def _find_view(views: list[dict[str, Any]], view_path: str) -> tuple[int, dict[str, Any]] | tuple[None, None]:
+    """Return (index, view) for view_path, which is either a path string or a
+    string index ('0', '1', …) for views that have no explicit path set."""
+    # Try by explicit path first.
+    for i, v in enumerate(views):
+        if v.get("path") == view_path:
+            return i, v
+    # Fall back to numeric index.
+    if view_path.isdigit():
+        idx = int(view_path)
+        if 0 <= idx < len(views):
+            return idx, views[idx]
+    return None, None
 
 
 def _format_diff(old: Any, new: Any) -> str:
