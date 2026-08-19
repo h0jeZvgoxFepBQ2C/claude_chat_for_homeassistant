@@ -572,7 +572,15 @@ class ClaudeChatPanel extends HTMLElement {
   set route(_v) {}
   set panel(_v) {}
 
-  connectedCallback() { if (!this.shadowRoot.firstChild) this._render(); }
+  connectedCallback() {
+    if (!this.shadowRoot.firstChild) {
+      this._render();
+    } else {
+      // Re-attached after navigating away: the browser resets the scroll
+      // container to the top, so jump back to the newest message.
+      this._scrollToBottom();
+    }
+  }
 
   // --- API helpers ---------------------------------------------------------
 
@@ -876,7 +884,13 @@ class ClaudeChatPanel extends HTMLElement {
 
   _scrollToBottom() {
     const messages = this.shadowRoot.querySelector(".messages");
-    if (messages) messages.scrollTop = messages.scrollHeight;
+    if (!messages) return;
+    messages.scrollTop = messages.scrollHeight;
+    // Once more after layout settles — right after (re)attach or a big
+    // re-render, scrollHeight isn't final yet in the same frame.
+    requestAnimationFrame(() => {
+      messages.scrollTop = messages.scrollHeight;
+    });
   }
 
   _showError(text) {
@@ -1200,6 +1214,17 @@ class ClaudeChatPanel extends HTMLElement {
     }
 
     this._scrollToBottom();
+
+    // Attached images load async and grow the content after we've already
+    // scrolled — follow along as long as the user is still near the bottom.
+    messages.querySelectorAll("img").forEach((img) => {
+      if (img.complete) return;
+      img.addEventListener("load", () => {
+        const nearBottom =
+          messages.scrollHeight - messages.scrollTop - messages.clientHeight < 200 + img.height;
+        if (nearBottom) messages.scrollTop = messages.scrollHeight;
+      }, { once: true });
+    });
   }
 
   _renderMessage(container, msg, pendingById) {
