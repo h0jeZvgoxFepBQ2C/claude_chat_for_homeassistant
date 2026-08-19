@@ -2,8 +2,9 @@
 
 Read-only:  list_entities, get_entity, list_areas, list_dashboards,
             get_dashboard, list_lovelace_resources, list_automations,
-            list_services
-Staged:     propose_dashboard_update, propose_service_call
+            list_services, get_script, get_helper
+Staged:     propose_dashboard_update, propose_service_call,
+            propose_automation_*, propose_script_*, propose_helper_*
             (write to a PendingChange the user approves in the UI)
 """
 from __future__ import annotations
@@ -22,11 +23,22 @@ import yaml as yaml_lib
 from homeassistant.components.lovelace.const import ConfigNotFound
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, entity_registry as er
-from homeassistant.util import dt as dt_util
+from homeassistant.util import dt as dt_util, slugify
 
 from .storage import PendingChange, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
+
+# Input-helper domains manageable through their storage collections (the same
+# mechanism the HA "Helpers" UI uses).
+HELPER_DOMAINS = (
+    "input_boolean",
+    "input_number",
+    "input_text",
+    "input_select",
+    "input_datetime",
+    "input_button",
+)
 
 
 def _target_key(change: PendingChange) -> str:
@@ -45,6 +57,13 @@ def _target_key(change: PendingChange) -> str:
     if kind == "automation_create":
         config = p.get("config") or {}
         return f"automation_create:{config.get('alias', change.id)}"
+    if kind in ("script_create", "script_update", "script_delete"):
+        return f"script:{p.get('script_id', '')}"
+    if kind == "helper_create":
+        config = p.get("config") or {}
+        return f"helper_create:{p.get('domain')}:{config.get('name', change.id)}"
+    if kind in ("helper_update", "helper_delete"):
+        return f"helper:{p.get('entity_id', '')}"
     if kind == "service_call":
         target_json = json.dumps(p.get("target") or {}, sort_keys=True)
         return f"service:{p.get('domain')}.{p.get('service')}:{target_json}"
@@ -344,6 +363,146 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"automation_id": {"type": "string"}},
             "required": ["automation_id"],
+        },
+    },
+    {
+        "name": "get_script",
+        "description": (
+            "Fetch the full config of a script from scripts.yaml by its "
+            "script_id (the part of the entity_id after 'script.'). Use "
+            "before propose_script_update so you don't drop fields. "
+            "Use list_entities(domain='script') to discover scripts."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"script_id": {"type": "string"}},
+            "required": ["script_id"],
+        },
+    },
+    {
+        "name": "propose_script_create",
+        "description": (
+            "Propose creating a new script. Stages a pending change for user "
+            "approval. On approve, the script is added to scripts.yaml and "
+            "script.reload is called. Requires `script: !include scripts.yaml` "
+            "in configuration.yaml (the HA default). Pick a short snake_case "
+            "script_id (becomes entity_id script.<script_id>) and build "
+            "`config` as a dict with keys like: alias, description, sequence, "
+            "mode, icon."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "script_id": {"type": "string", "description": "snake_case id, becomes script.<script_id>"},
+                "config": {"type": "object", "description": "Script config dict (alias, sequence, mode, …)"},
+                "summary": {"type": "string"},
+            },
+            "required": ["script_id", "config", "summary"],
+        },
+    },
+    {
+        "name": "propose_script_update",
+        "description": (
+            "Propose replacing an existing script's config by script_id. "
+            "Sends the complete new config — fetch the current one with "
+            "get_script first so you don't accidentally drop fields. "
+            "Stages for user approval."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "script_id": {"type": "string"},
+                "config": {"type": "object"},
+                "summary": {"type": "string"},
+            },
+            "required": ["script_id", "config", "summary"],
+        },
+    },
+    {
+        "name": "propose_script_delete",
+        "description": "Propose deleting a script. Stages for user approval.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "script_id": {"type": "string"},
+                "summary": {"type": "string"},
+            },
+            "required": ["script_id", "summary"],
+        },
+    },
+    {
+        "name": "get_helper",
+        "description": (
+            "Fetch the stored config of a UI-managed input helper "
+            "(input_boolean, input_number, input_text, input_select, "
+            "input_datetime, input_button) by entity_id. Use before "
+            "propose_helper_update. Errors for YAML-defined helpers — those "
+            "can't be edited here."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string"}},
+            "required": ["entity_id"],
+        },
+    },
+    {
+        "name": "propose_helper_create",
+        "description": (
+            "Propose creating an input helper. Stages a pending change for "
+            "user approval; on approve it's created via HA's storage "
+            "collection (same as the Helpers UI) and takes effect "
+            "immediately — no reload or restart needed. Fields per domain: "
+            "input_boolean: name, icon, initial(bool). "
+            "input_number: name, min, max (required), step, initial, "
+            "unit_of_measurement, mode('slider'|'box'), icon. "
+            "input_text: name, min, max, initial, pattern, "
+            "mode('text'|'password'), unit_of_measurement, icon. "
+            "input_select: name, options (required, list of strings), "
+            "initial, icon. "
+            "input_datetime: name, has_date(bool), has_time(bool), initial, "
+            "icon. input_button: name, icon."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "domain": {"type": "string", "enum": list(HELPER_DOMAINS)},
+                "config": {"type": "object", "description": "Helper config; must include `name`"},
+                "summary": {"type": "string"},
+            },
+            "required": ["domain", "config", "summary"],
+        },
+    },
+    {
+        "name": "propose_helper_update",
+        "description": (
+            "Propose replacing the config of a UI-managed input helper by "
+            "entity_id. Send the COMPLETE new config (same fields as "
+            "propose_helper_create) — omitted fields are removed. Fetch the "
+            "current config with get_helper first. Stages for user approval."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "config": {"type": "object"},
+                "summary": {"type": "string"},
+            },
+            "required": ["entity_id", "config", "summary"],
+        },
+    },
+    {
+        "name": "propose_helper_delete",
+        "description": (
+            "Propose deleting a UI-managed input helper by entity_id. "
+            "Stages for user approval."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string"},
+                "summary": {"type": "string"},
+            },
+            "required": ["entity_id", "summary"],
         },
     },
     {
@@ -785,7 +944,7 @@ class ToolRegistry:
         config = args["config"]
         if not isinstance(config, dict):
             return {"error": "config must be an object"}
-        if not _automations_yaml_supported(self.hass):
+        if not _yaml_file_supported(self.hass, "automations.yaml"):
             return {
                 "error": (
                     "automations.yaml not in use — your configuration.yaml "
@@ -865,6 +1024,252 @@ class ToolRegistry:
                 "automation_id": automation_id,
                 "yaml": _yaml_dump(existing),
             },
+            diff=None,
+            source_tool_use_id=tool_use_id,
+        )
+        await self._add_pending_supersede(session_id, change)
+        return {
+            "pending_change_id": change.id,
+            "summary": args["summary"],
+            "status": "awaiting_user_approval",
+        }
+
+    # --- script tools ------------------------------------------------------
+
+    async def _tool_get_script(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        script_id = args["script_id"]
+        scripts = await self._read_scripts()
+        if script_id not in scripts:
+            return {
+                "error": f"Script not found in scripts.yaml: {script_id}",
+                "available_script_ids": sorted(scripts),
+            }
+        return {"script_id": script_id, "config": scripts[script_id]}
+
+    async def _tool_propose_script_create(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        script_id = args["script_id"]
+        config = args["config"]
+        if not isinstance(config, dict):
+            return {"error": "config must be an object"}
+        if script_id != slugify(script_id):
+            return {"error": f"script_id must be a slug, e.g. {slugify(script_id)!r}"}
+        if not _yaml_file_supported(self.hass, "scripts.yaml"):
+            return {
+                "error": (
+                    "scripts.yaml not in use — your configuration.yaml "
+                    "needs `script: !include scripts.yaml` for "
+                    "programmatic script creation."
+                )
+            }
+        scripts = await self._read_scripts()
+        if script_id in scripts:
+            return {
+                "error": (
+                    f"Script already exists: {script_id}. "
+                    "Use propose_script_update instead."
+                )
+            }
+        change = PendingChange(
+            id=uuid.uuid4().hex,
+            kind="script_create",
+            summary=args["summary"],
+            payload={
+                "script_id": script_id,
+                "config": config,
+                "yaml": _yaml_dump({script_id: config}),
+            },
+            diff=None,
+            source_tool_use_id=tool_use_id,
+        )
+        await self._add_pending_supersede(session_id, change)
+        return {
+            "pending_change_id": change.id,
+            "summary": args["summary"],
+            "status": "awaiting_user_approval",
+        }
+
+    async def _tool_propose_script_update(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        script_id = args["script_id"]
+        new_config = args["config"]
+        scripts = await self._read_scripts()
+        if script_id not in scripts:
+            return {"error": f"Script not found: {script_id}"}
+        diff = _format_diff(scripts[script_id], new_config)
+        change = PendingChange(
+            id=uuid.uuid4().hex,
+            kind="script_update",
+            summary=args["summary"],
+            payload={
+                "script_id": script_id,
+                "config": new_config,
+                "yaml": _yaml_dump({script_id: new_config}),
+            },
+            diff=diff,
+            source_tool_use_id=tool_use_id,
+        )
+        await self._add_pending_supersede(session_id, change)
+        return {
+            "pending_change_id": change.id,
+            "summary": args["summary"],
+            "status": "awaiting_user_approval",
+        }
+
+    async def _tool_propose_script_delete(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        script_id = args["script_id"]
+        scripts = await self._read_scripts()
+        if script_id not in scripts:
+            return {"error": f"Script not found: {script_id}"}
+        change = PendingChange(
+            id=uuid.uuid4().hex,
+            kind="script_delete",
+            summary=args["summary"],
+            payload={
+                "script_id": script_id,
+                "yaml": _yaml_dump({script_id: scripts[script_id]}),
+            },
+            diff=None,
+            source_tool_use_id=tool_use_id,
+        )
+        await self._add_pending_supersede(session_id, change)
+        return {
+            "pending_change_id": change.id,
+            "summary": args["summary"],
+            "status": "awaiting_user_approval",
+        }
+
+    async def _read_scripts(self) -> dict[str, Any]:
+        path = self.hass.config.path("scripts.yaml")
+        return await self.hass.async_add_executor_job(_read_scripts_yaml, path)
+
+    # --- input helper tools ------------------------------------------------
+
+    def _helper_collection(self, domain: str) -> Any | None:
+        """Find a helper domain's storage collection.
+
+        The collection instance is a local variable in the component's
+        async_setup, so the only stable handle to it is the websocket
+        `<domain>/create` handler it registers: unwrap the functools.wraps
+        chain and take the bound method's StorageCollectionWebsocket owner.
+        """
+        handlers = self.hass.data.get("websocket_api") or {}
+        entry = handlers.get(f"{domain}/create")
+        if not entry:
+            return None
+        handler = entry[0]
+        while hasattr(handler, "__wrapped__"):
+            handler = handler.__wrapped__
+        owner = getattr(handler, "__self__", None)
+        return getattr(owner, "storage_collection", None)
+
+    def _helper_item(self, entity_id: str) -> tuple[Any, dict[str, Any]] | dict[str, Any]:
+        """Resolve entity_id → (collection, stored item), or an error dict."""
+        domain, _, item_id = entity_id.partition(".")
+        if domain not in HELPER_DOMAINS or not item_id:
+            return {"error": f"Not an input helper entity_id: {entity_id}"}
+        coll = self._helper_collection(domain)
+        if coll is None:
+            return {"error": f"The {domain} integration is not loaded"}
+        item = next((i for i in coll.async_items() if i["id"] == item_id), None)
+        if item is None:
+            return {
+                "error": (
+                    f"{entity_id} is not a UI-managed helper (YAML-defined "
+                    "helpers can't be edited here), or it doesn't exist."
+                )
+            }
+        return coll, item
+
+    async def _tool_get_helper(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        resolved = self._helper_item(args["entity_id"])
+        if isinstance(resolved, dict):
+            return resolved
+        _, item = resolved
+        return {"entity_id": args["entity_id"], "config": item}
+
+    async def _tool_propose_helper_create(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        domain = args["domain"]
+        config = args["config"]
+        if domain not in HELPER_DOMAINS:
+            return {"error": f"Unsupported helper domain: {domain}"}
+        if not isinstance(config, dict) or not config.get("name"):
+            return {"error": "config must be an object with at least a `name`"}
+        if self._helper_collection(domain) is None:
+            return {"error": f"The {domain} integration is not loaded"}
+        change = PendingChange(
+            id=uuid.uuid4().hex,
+            kind="helper_create",
+            summary=args["summary"],
+            payload={
+                "domain": domain,
+                "config": config,
+                "yaml": _yaml_dump({domain: config}),
+            },
+            diff=None,
+            source_tool_use_id=tool_use_id,
+        )
+        await self._add_pending_supersede(session_id, change)
+        return {
+            "pending_change_id": change.id,
+            "summary": args["summary"],
+            "status": "awaiting_user_approval",
+        }
+
+    async def _tool_propose_helper_update(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        entity_id = args["entity_id"]
+        config = args["config"]
+        if not isinstance(config, dict):
+            return {"error": "config must be an object"}
+        resolved = self._helper_item(entity_id)
+        if isinstance(resolved, dict):
+            return resolved
+        _, existing = resolved
+        new_item = {"id": existing["id"], **{k: v for k, v in config.items() if k != "id"}}
+        change = PendingChange(
+            id=uuid.uuid4().hex,
+            kind="helper_update",
+            summary=args["summary"],
+            payload={
+                "entity_id": entity_id,
+                "config": config,
+                "yaml": _yaml_dump(config),
+            },
+            diff=_format_diff(existing, new_item),
+            source_tool_use_id=tool_use_id,
+        )
+        await self._add_pending_supersede(session_id, change)
+        return {
+            "pending_change_id": change.id,
+            "summary": args["summary"],
+            "status": "awaiting_user_approval",
+        }
+
+    async def _tool_propose_helper_delete(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        entity_id = args["entity_id"]
+        resolved = self._helper_item(entity_id)
+        if isinstance(resolved, dict):
+            return resolved
+        _, existing = resolved
+        change = PendingChange(
+            id=uuid.uuid4().hex,
+            kind="helper_delete",
+            summary=args["summary"],
+            payload={"entity_id": entity_id, "yaml": _yaml_dump(existing)},
             diff=None,
             source_tool_use_id=tool_use_id,
         )
@@ -1045,7 +1450,86 @@ class ToolRegistry:
         if change.kind in ("automation_create", "automation_update", "automation_delete"):
             return await self._apply_automation_change(change)
 
+        if change.kind in ("script_create", "script_update", "script_delete"):
+            return await self._apply_script_change(change)
+
+        if change.kind in ("helper_create", "helper_update", "helper_delete"):
+            return await self._apply_helper_change(change)
+
         return {"error": f"Unknown change kind: {change.kind}"}
+
+    async def _apply_script_change(self, change: PendingChange) -> dict[str, Any]:
+        path = self.hass.config.path("scripts.yaml")
+        script_id = change.payload["script_id"]
+        try:
+            scripts = await self.hass.async_add_executor_job(_read_scripts_yaml, path)
+        except Exception as err:  # noqa: BLE001
+            return {"error": f"Could not read scripts.yaml: {err}"}
+
+        if change.kind == "script_delete":
+            if script_id not in scripts:
+                return {"error": f"Script no longer exists: {script_id}"}
+            del scripts[script_id]
+        else:
+            if change.kind == "script_update" and script_id not in scripts:
+                return {"error": f"Script no longer exists: {script_id}"}
+            scripts[script_id] = change.payload["config"]
+
+        try:
+            await self.hass.async_add_executor_job(
+                _write_yaml_atomic, path, scripts
+            )
+        except Exception as err:  # noqa: BLE001
+            return {"error": f"Could not write scripts.yaml: {err}"}
+
+        try:
+            await self.hass.services.async_call("script", "reload", {}, blocking=True)
+        except Exception as err:  # noqa: BLE001
+            return {"error": f"Wrote file but reload failed: {err}"}
+
+        # Same verification as automations: if the entity didn't appear the
+        # include line is missing from configuration.yaml.
+        if change.kind in ("script_create", "script_update"):
+            if self.hass.states.get(f"script.{script_id}") is None:
+                return {
+                    "error": (
+                        "Wrote scripts.yaml but HA didn't load the script. "
+                        "Your configuration.yaml is probably missing "
+                        "`script: !include scripts.yaml`. Add that line "
+                        "and restart HA."
+                    )
+                }
+
+        return {"ok": True, "script_id": script_id, "kind": change.kind}
+
+    async def _apply_helper_change(self, change: PendingChange) -> dict[str, Any]:
+        p = change.payload
+        if change.kind == "helper_create":
+            domain = p["domain"]
+            coll = self._helper_collection(domain)
+            if coll is None:
+                return {"error": f"The {domain} integration is not loaded"}
+            config = {k: v for k, v in p["config"].items() if k != "id"}
+            try:
+                item = await coll.async_create_item(config)
+            except Exception as err:  # noqa: BLE001
+                return {"error": f"Could not create helper: {err}"}
+            return {"ok": True, "entity_id": f"{domain}.{item['id']}"}
+
+        entity_id = p["entity_id"]
+        resolved = self._helper_item(entity_id)
+        if isinstance(resolved, dict):
+            return resolved
+        coll, item = resolved
+        try:
+            if change.kind == "helper_update":
+                config = {k: v for k, v in p["config"].items() if k != "id"}
+                await coll.async_update_item(item["id"], config)
+            else:  # helper_delete
+                await coll.async_delete_item(item["id"])
+        except Exception as err:  # noqa: BLE001
+            return {"error": f"Could not {change.kind.split('_')[1]} helper: {err}"}
+        return {"ok": True, "entity_id": entity_id}
 
     async def _apply_automation_change(
         self, change: PendingChange
@@ -1083,7 +1567,7 @@ class ToolRegistry:
 
         try:
             await self.hass.async_add_executor_job(
-                _write_automations_yaml, path, automations
+                _write_yaml_atomic, path, automations
             )
         except Exception as err:  # noqa: BLE001
             return {"error": f"Could not write automations.yaml: {err}"}
@@ -1182,14 +1666,28 @@ def _read_automations_yaml(path: str) -> list[dict]:
     return data
 
 
-def _write_automations_yaml(path: str, automations: list[dict]) -> None:
-    """Atomic write to automations.yaml."""
+def _read_scripts_yaml(path: str) -> dict[str, Any]:
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        data = yaml_lib.safe_load(f)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("scripts.yaml is not a mapping")
+    return data
+
+
+def _write_yaml_atomic(path: str, data: Any) -> None:
+    """Atomic YAML write (tmp file + os.replace)."""
     parent = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(dir=parent, prefix="automations.yaml.", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(
+        dir=parent, prefix=os.path.basename(path) + ".", suffix=".tmp"
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             yaml_lib.safe_dump(
-                automations,
+                data,
                 f,
                 sort_keys=False,
                 default_flow_style=False,
@@ -1204,9 +1702,9 @@ def _write_automations_yaml(path: str, automations: list[dict]) -> None:
         raise
 
 
-def _automations_yaml_supported(hass: HomeAssistant) -> bool:
-    """Cheap heuristic: automations.yaml exists or its parent is writable."""
-    path = hass.config.path("automations.yaml")
+def _yaml_file_supported(hass: HomeAssistant, filename: str) -> bool:
+    """Cheap heuristic: the file exists or its parent is writable."""
+    path = hass.config.path(filename)
     if os.path.exists(path):
         return True
     parent = os.path.dirname(path)

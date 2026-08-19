@@ -555,6 +555,15 @@ class ClaudeChatPanel extends HTMLElement {
       this._loadModels();
       this._loadDiagnostics();
       this._loadSessions();
+      // If the websocket reconnects mid-stream, the stream events are gone
+      // for good (we subscribe with resubscribe:false — see _sendMessage).
+      // Reset the composer and re-render from the store's persisted state.
+      this._hass.connection.addEventListener("ready", () => {
+        if (this._isStreaming) {
+          this._finishStreaming();
+          if (this._activeSessionId) this._selectSession(this._activeSessionId);
+        }
+      });
     }
   }
   get hass() { return this._hass; }
@@ -706,7 +715,13 @@ class ClaudeChatPanel extends HTMLElement {
           text,
           model: this._selectedModel,
           images,
-        }
+        },
+        // CRITICAL: without this, home-assistant-js-websocket re-sends the
+        // whole command on every reconnect (default resubscribe:true) — and
+        // a stream interrupted by a disconnect never gets its `done`, so its
+        // subscription stays registered and replays the message on EVERY
+        // future reconnect. That duplicated user messages and re-ran Claude.
+        { resubscribe: false }
       );
     } catch (err) {
       this._showError("Send failed: " + err.message);
@@ -1289,14 +1304,14 @@ class ClaudeChatPanel extends HTMLElement {
       const data = p.service_data && Object.keys(p.service_data).length
         ? `\nData: ${JSON.stringify(p.service_data, null, 2)}` : "";
       body = `<div class="service-payload">${escapeHtml(`${p.domain}.${p.service}${target}${data}`)}</div>`;
-    } else if (change.kind === "automation_create") {
+    } else if (/^(automation|script|helper)_create$/.test(change.kind)) {
       body = `<div class="service-payload">${escapeHtml(p.yaml || "")}</div>`;
-    } else if (change.kind === "automation_update") {
+    } else if (/^(automation|script|helper)_update$/.test(change.kind)) {
       body = change.diff
         ? `<div class="diff">${formatDiff(change.diff)}</div>`
         : `<div class="service-payload">${escapeHtml(p.yaml || "")}</div>`;
-    } else if (change.kind === "automation_delete") {
-      body = `<div class="service-payload">Will remove automation:\n\n${escapeHtml(p.yaml || "")}</div>`;
+    } else if (/^(automation|script|helper)_delete$/.test(change.kind)) {
+      body = `<div class="service-payload">Will remove:\n\n${escapeHtml(p.yaml || "")}</div>`;
     } else if (change.diff) {
       body = `<div class="diff">${formatDiff(change.diff)}</div>`;
     } else {
@@ -1344,6 +1359,15 @@ function targetKeyFor(change) {
       return `automation:${p.automation_id || ""}`;
     case "automation_create":
       return `automation_create:${p.config?.alias || change.id}`;
+    case "script_create":
+    case "script_update":
+    case "script_delete":
+      return `script:${p.script_id || ""}`;
+    case "helper_create":
+      return `helper_create:${p.domain}:${p.config?.name || change.id}`;
+    case "helper_update":
+    case "helper_delete":
+      return `helper:${p.entity_id || ""}`;
     case "service_call":
       return `service:${p.domain}.${p.service}:${JSON.stringify(p.target || {})}`;
     default:
@@ -1391,6 +1415,12 @@ function labelForKind(kind) {
   if (kind === "automation_create") return "Pending: create automation";
   if (kind === "automation_update") return "Pending: update automation";
   if (kind === "automation_delete") return "Pending: delete automation";
+  if (kind === "script_create") return "Pending: create script";
+  if (kind === "script_update") return "Pending: update script";
+  if (kind === "script_delete") return "Pending: delete script";
+  if (kind === "helper_create") return "Pending: create helper";
+  if (kind === "helper_update") return "Pending: update helper";
+  if (kind === "helper_delete") return "Pending: delete helper";
   return "Pending change: " + kind;
 }
 

@@ -24,10 +24,9 @@ Rules:
   proposing an update. Use list_entities / get_entity to discover the right \
   entity_ids. Use list_lovelace_resources to see if custom cards (mushroom, \
   mini-graph-card, etc.) are available — only use them if they're listed.
-- propose_dashboard_update, propose_service_call, propose_automation_create, \
-  propose_automation_update, and propose_automation_delete all STAGE changes \
-  for the user to review. They do NOT apply immediately. Do not say "done" \
-  until the user has approved.
+- ALL propose_* tools (dashboards, service calls, automations, scripts, \
+  input helpers) STAGE changes for the user to review. They do NOT apply \
+  immediately. Do not say "done" until the user has approved.
 - If you propose a revised change for the SAME target (same dashboard \
   url_path, same automation_id, etc.), the older pending change is \
   AUTOMATICALLY replaced — there is only ever one open proposal per target. \
@@ -48,6 +47,15 @@ Rules:
   get_automation to read the full config before propose_automation_update. \
   Build configs as dicts (e.g. {"alias": "...", "trigger": [{"platform": \
   "state", ...}], "action": [{"service": "..."}]}).
+- For scripts: the script_id is the entity_id without the "script." prefix. \
+  Use list_entities(domain="script") to discover scripts and get_script to \
+  read the full config before propose_script_update. Configs look like \
+  {"alias": "...", "sequence": [{"service": "..."}], "mode": "single"}.
+- For input helpers (input_boolean, input_number, input_text, input_select, \
+  input_datetime, input_button): use propose_helper_create / _update / \
+  _delete. Updates replace the FULL config — call get_helper first and \
+  include every field you want to keep. Only UI-managed helpers can be \
+  edited; YAML-defined ones can't.
 - For debugging: list_automation_traces shows recent runs of an automation \
   (success/failure, trigger, condition results). get_automation_trace shows \
   the full step-by-step for one run. get_state_history shows when an entity \
