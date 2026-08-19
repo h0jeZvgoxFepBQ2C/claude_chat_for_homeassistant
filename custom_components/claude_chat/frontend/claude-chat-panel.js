@@ -93,7 +93,7 @@ const STYLES = `
   button.primary:hover { opacity: 0.9; }
 
   /* ===== Main column ===== */
-  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
   .chat-header {
     padding: 12px 24px;
     border-bottom: 1px solid var(--divider-color);
@@ -115,6 +115,10 @@ const STYLES = `
   /* ===== Messages ===== */
   .messages {
     flex: 1;
+    /* Without min-height:0 a flex item refuses to shrink below its content,
+       so .messages grew to the full chat height and the PAGE scrolled
+       instead — which made every scrollTop-based autoscroll a no-op. */
+    min-height: 0;
     overflow-y: auto;
     padding: 24px;
     display: flex;
@@ -883,11 +887,15 @@ class ClaudeChatPanel extends HTMLElement {
   }
 
   _scrollToBottom() {
+    this._stickToBottom = true;
     const messages = this.shadowRoot.querySelector(".messages");
     if (!messages) return;
     messages.scrollTop = messages.scrollHeight;
     // Once more after layout settles — right after (re)attach or a big
-    // re-render, scrollHeight isn't final yet in the same frame.
+    // re-render, scrollHeight isn't final yet in the same frame. If the
+    // panel is still hidden (height 0) even that is a no-op, but then the
+    // ResizeObserver set up in _render fires once it becomes visible and
+    // finishes the job.
     requestAnimationFrame(() => {
       messages.scrollTop = messages.scrollHeight;
     });
@@ -965,6 +973,23 @@ class ClaudeChatPanel extends HTMLElement {
     this.shadowRoot.querySelector(".menu-toggle").addEventListener("click", () =>
       this._toggleSidebar()
     );
+
+    // Stick-to-bottom: scrolling programmatically or staying near the end
+    // keeps the flag set; scrolling up to read clears it. The ResizeObserver
+    // fires when the container gets its real size — crucially also when the
+    // panel is (re)shown after navigating away, when scroll attempts made
+    // while it was hidden (height 0) were no-ops.
+    const messages = this.shadowRoot.querySelector("#messages");
+    this._stickToBottom = true;
+    messages.addEventListener("scroll", () => {
+      this._stickToBottom =
+        messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
+    });
+    if (this._resizeObserver) this._resizeObserver.disconnect();
+    this._resizeObserver = new ResizeObserver(() => {
+      if (this._stickToBottom) messages.scrollTop = messages.scrollHeight;
+    });
+    this._resizeObserver.observe(messages);
     this.shadowRoot.querySelector(".sidebar-backdrop").addEventListener("click", () =>
       this._closeSidebar()
     );
