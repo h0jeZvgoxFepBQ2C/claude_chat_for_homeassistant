@@ -64,6 +64,10 @@ def _target_key(change: PendingChange) -> str:
         return f"helper_create:{p.get('domain')}:{config.get('name', change.id)}"
     if kind in ("helper_update", "helper_delete"):
         return f"helper:{p.get('entity_id', '')}"
+    if kind == "file_write":
+        return f"file:{p.get('path', '')}"
+    if kind == "resource_add":
+        return f"resource:{p.get('url', '')}"
     if kind == "service_call":
         target_json = json.dumps(p.get("target") or {}, sort_keys=True)
         return f"service:{p.get('domain')}.{p.get('service')}:{target_json}"
@@ -503,6 +507,68 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "summary": {"type": "string"},
             },
             "required": ["entity_id", "summary"],
+        },
+    },
+    {
+        "name": "list_files",
+        "description": (
+            "List files in the config/www folder (served by HA at /local/...). "
+            "Returns relative paths and sizes. Use this to see which local "
+            "assets (custom card JS, images, …) exist."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_file",
+        "description": (
+            "Read a text file from the config/www folder. Path is relative "
+            "to www/ (e.g. 'my-card.js' or a '/local/my-card.js' URL). "
+            "Only files inside www/ are accessible."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "propose_file_write",
+        "description": (
+            "Propose creating or overwriting a text file inside config/www "
+            "(and ONLY there — HA serves it at /local/<path>). Stages a "
+            "pending change with a diff for user approval. Typical use: "
+            "write a small custom Lovelace card/module as JS, then "
+            "propose_resource_add with url '/local/<path>'. You cannot "
+            "download files from the internet — only write content you "
+            "author yourself."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path relative to www/, e.g. 'claude/my-card.js' (subfolders are created)"},
+                "content": {"type": "string"},
+                "summary": {"type": "string"},
+            },
+            "required": ["path", "content", "summary"],
+        },
+    },
+    {
+        "name": "propose_resource_add",
+        "description": (
+            "Propose registering a Lovelace resource (custom card/module) so "
+            "dashboards can use it. Stages for user approval; applies "
+            "immediately on approve (users may need a browser refresh). "
+            "Only works when Lovelace is in storage mode (the default). "
+            "Check list_lovelace_resources first to avoid duplicates."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "e.g. '/local/my-card.js'"},
+                "res_type": {"type": "string", "enum": ["module", "js", "css", "html"], "description": "'module' for modern ES-module cards (almost always right)"},
+                "summary": {"type": "string"},
+            },
+            "required": ["url", "res_type", "summary"],
         },
     },
     {
@@ -1280,6 +1346,155 @@ class ToolRegistry:
             "status": "awaiting_user_approval",
         }
 
+    # --- www file + resource tools -----------------------------------------
+
+    def _resolve_www_path(self, path: str) -> str | None:
+        """Map a user/Claude-supplied path onto config/www, or None if it
+        escapes it. Accepts 'foo.js', 'www/foo.js', and '/local/foo.js'."""
+        rel = (path or "").strip().replace("\\", "/")
+        if rel.startswith("/") and not rel.startswith("/local/"):
+            # Absolute paths are only accepted in their /local/... URL form —
+            # anything else is likely a mistaken filesystem path.
+            return None
+        rel = rel.lstrip("/")
+        for prefix in ("local/", "www/"):
+            if rel.startswith(prefix):
+                rel = rel[len(prefix):]
+        if not rel:
+            return None
+        www_root = os.path.realpath(self.hass.config.path("www"))
+        full = os.path.realpath(os.path.join(www_root, rel))
+        try:
+            if os.path.commonpath([www_root, full]) != www_root or full == www_root:
+                return None
+        except ValueError:
+            return None
+        return full
+
+    async def _tool_list_files(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        www_root = self.hass.config.path("www")
+
+        def _walk() -> list[dict[str, Any]]:
+            result = []
+            for dirpath, _dirnames, filenames in os.walk(www_root):
+                for name in filenames:
+                    full = os.path.join(dirpath, name)
+                    result.append(
+                        {
+                            "path": os.path.relpath(full, www_root),
+                            "size": os.path.getsize(full),
+                        }
+                    )
+                    if len(result) >= 500:
+                        return result
+            return result
+
+        if not os.path.isdir(www_root):
+            return {"files": [], "note": "config/www does not exist yet — the first approved file write creates it."}
+        files = await self.hass.async_add_executor_job(_walk)
+        return {"files": sorted(files, key=lambda f: f["path"]), "truncated": len(files) >= 500}
+
+    async def _tool_get_file(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        full = self._resolve_www_path(args["path"])
+        if full is None:
+            return {"error": "Path must stay inside config/www"}
+        if not os.path.isfile(full):
+            return {"error": f"File not found: {args['path']}"}
+        if os.path.getsize(full) > 200_000:
+            return {"error": "File too large to read (>200 KB)"}
+        try:
+            content = await self.hass.async_add_executor_job(_read_text, full)
+        except UnicodeDecodeError:
+            return {"error": "Not a text file"}
+        return {"path": args["path"], "content": content}
+
+    async def _tool_propose_file_write(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        path = args["path"]
+        content = args["content"]
+        full = self._resolve_www_path(path)
+        if full is None:
+            return {"error": "Path must stay inside config/www"}
+        www_root = os.path.realpath(self.hass.config.path("www"))
+        rel = os.path.relpath(full, www_root)
+
+        diff = None
+        if os.path.isfile(full):
+            try:
+                old = await self.hass.async_add_executor_job(_read_text, full)
+                diff = "".join(
+                    difflib.unified_diff(
+                        old.splitlines(keepends=True),
+                        content.splitlines(keepends=True),
+                        fromfile="current",
+                        tofile="proposed",
+                    )
+                )
+            except UnicodeDecodeError:
+                return {"error": f"Refusing to overwrite binary file: {rel}"}
+
+        change = PendingChange(
+            id=uuid.uuid4().hex,
+            kind="file_write",
+            summary=args["summary"],
+            payload={"path": rel, "content": content, "local_url": f"/local/{rel}"},
+            diff=diff,
+            source_tool_use_id=tool_use_id,
+        )
+        await self._add_pending_supersede(session_id, change)
+        return {
+            "pending_change_id": change.id,
+            "summary": args["summary"],
+            "local_url": f"/local/{rel}",
+            "status": "awaiting_user_approval",
+        }
+
+    def _resource_collection(self) -> Any | None:
+        """The Lovelace resource storage collection, or None in YAML mode."""
+        lovelace_data = self.hass.data.get("lovelace")
+        resources = getattr(lovelace_data, "resources", None)
+        if resources is None or not hasattr(resources, "async_create_item"):
+            return None
+        return resources
+
+    async def _tool_propose_resource_add(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        url = args["url"]
+        res_type = args["res_type"]
+        if res_type not in ("module", "js", "css", "html"):
+            return {"error": f"Invalid res_type: {res_type}"}
+        resources = self._resource_collection()
+        if resources is None:
+            return {
+                "error": (
+                    "Lovelace resources are YAML-managed (mode: yaml) — "
+                    "they must be added in configuration.yaml instead."
+                )
+            }
+        await resources.async_get_info()  # ensure the collection is loaded
+        if any(i.get("url") == url for i in resources.async_items()):
+            return {"error": f"Resource already registered: {url}"}
+        change = PendingChange(
+            id=uuid.uuid4().hex,
+            kind="resource_add",
+            summary=args["summary"],
+            payload={"url": url, "res_type": res_type},
+            diff=None,
+            source_tool_use_id=tool_use_id,
+        )
+        await self._add_pending_supersede(session_id, change)
+        return {
+            "pending_change_id": change.id,
+            "summary": args["summary"],
+            "status": "awaiting_user_approval",
+        }
+
     async def _tool_list_services(
         self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
     ) -> dict[str, Any]:
@@ -1455,6 +1670,31 @@ class ToolRegistry:
 
         if change.kind in ("helper_create", "helper_update", "helper_delete"):
             return await self._apply_helper_change(change)
+
+        if change.kind == "file_write":
+            full = self._resolve_www_path(change.payload["path"])
+            if full is None:
+                return {"error": "Path must stay inside config/www"}
+            try:
+                await self.hass.async_add_executor_job(
+                    _write_text_atomic, full, change.payload["content"]
+                )
+            except Exception as err:  # noqa: BLE001
+                return {"error": f"Could not write file: {err}"}
+            return {"ok": True, "path": change.payload["path"], "local_url": change.payload.get("local_url")}
+
+        if change.kind == "resource_add":
+            resources = self._resource_collection()
+            if resources is None:
+                return {"error": "Lovelace resources are YAML-managed — cannot add programmatically."}
+            try:
+                await resources.async_get_info()  # ensure loaded
+                item = await resources.async_create_item(
+                    {"res_type": change.payload["res_type"], "url": change.payload["url"]}
+                )
+            except Exception as err:  # noqa: BLE001
+                return {"error": f"Could not add resource: {err}"}
+            return {"ok": True, "resource_id": item.get("id"), "url": change.payload["url"]}
 
         return {"error": f"Unknown change kind: {change.kind}"}
 
@@ -1693,6 +1933,30 @@ def _write_yaml_atomic(path: str, data: Any) -> None:
                 default_flow_style=False,
                 allow_unicode=True,
             )
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _read_text(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _write_text_atomic(path: str, content: str) -> None:
+    """Atomic text write; creates parent directories (inside www/)."""
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        dir=parent, prefix=os.path.basename(path) + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
         os.replace(tmp, path)
     except Exception:
         try:

@@ -1362,6 +1362,15 @@ class ClaudeChatPanel extends HTMLElement {
         : `<div class="service-payload">${escapeHtml(p.yaml || "")}</div>`;
     } else if (/^(automation|script|helper)_delete$/.test(change.kind)) {
       body = `<div class="service-payload">Will remove:\n\n${escapeHtml(p.yaml || "")}</div>`;
+    } else if (change.kind === "file_write") {
+      const preview = (p.content || "").length > 4000
+        ? p.content.slice(0, 4000) + "\n… (truncated)"
+        : (p.content || "");
+      body = change.diff
+        ? `<div class="diff">${formatDiff(change.diff)}</div>`
+        : `<div class="service-payload">${escapeHtml(`${p.path}\n\n${preview}`)}</div>`;
+    } else if (change.kind === "resource_add") {
+      body = `<div class="service-payload">${escapeHtml(`${p.res_type}: ${p.url}`)}</div>`;
     } else if (change.diff) {
       body = `<div class="diff">${formatDiff(change.diff)}</div>`;
     } else {
@@ -1418,6 +1427,10 @@ function targetKeyFor(change) {
     case "helper_update":
     case "helper_delete":
       return `helper:${p.entity_id || ""}`;
+    case "file_write":
+      return `file:${p.path || ""}`;
+    case "resource_add":
+      return `resource:${p.url || ""}`;
     case "service_call":
       return `service:${p.domain}.${p.service}:${JSON.stringify(p.target || {})}`;
     default:
@@ -1471,6 +1484,8 @@ function labelForKind(kind) {
   if (kind === "helper_create") return "Pending: create helper";
   if (kind === "helper_update") return "Pending: update helper";
   if (kind === "helper_delete") return "Pending: delete helper";
+  if (kind === "file_write") return "Pending: write file (www)";
+  if (kind === "resource_add") return "Pending: add Lovelace resource";
   return "Pending change: " + kind;
 }
 

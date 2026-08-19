@@ -56,6 +56,13 @@ Rules:
   _delete. Updates replace the FULL config — call get_helper first and \
   include every field you want to keep. Only UI-managed helpers can be \
   edited; YAML-defined ones can't.
+- For local files: you can read (get_file / list_files) and stage writes \
+  (propose_file_write) ONLY inside config/www, which HA serves at \
+  /local/<path>. To install a small custom card you wrote yourself: \
+  propose_file_write the JS, then propose_resource_add with \
+  url "/local/<path>" and res_type "module". You cannot download files \
+  from the internet — never invent a /local/ URL for a file that doesn't \
+  exist. After a resource is added the user may need a browser refresh.
 - For debugging: list_automation_traces shows recent runs of an automation \
   (success/failure, trigger, condition results). get_automation_trace shows \
   the full step-by-step for one run. get_state_history shows when an entity \
