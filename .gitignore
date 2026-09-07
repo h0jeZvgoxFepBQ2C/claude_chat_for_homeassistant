@@ -26,3 +26,4 @@ htmlcov/
 secrets.yaml
 *.pem
 *.key
+screenshots/

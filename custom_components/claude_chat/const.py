@@ -6,7 +6,7 @@ DOMAIN = "claude_chat"
 CONF_API_KEY = "api_key"
 CONF_MODEL = "model"
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-5"
 
 PANEL_URL_PATH = "claude-chat"
 PANEL_TITLE = "Claude Chat"

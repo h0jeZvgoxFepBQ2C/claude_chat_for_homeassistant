@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from anthropic import AsyncAnthropic
@@ -93,14 +94,23 @@ EventType = dict[str, Any]
 EventEmitter = Callable[[EventType], Awaitable[None]]
 
 
+# Static fallback if the Models API is unreachable. The live list comes from
+# list_models() below, so new model releases show up without a new release
+# of this integration.
 AVAILABLE_MODELS = [
-    {"id": "claude-haiku-4-5-20251001", "name": "Haiku 4.5"},
-    {"id": "claude-sonnet-4-6", "name": "Sonnet 4.6"},
-    {"id": "claude-opus-4-7", "name": "Opus 4.7"},
+    {"id": "claude-haiku-4-5", "name": "Haiku 4.5"},
+    {"id": "claude-sonnet-5", "name": "Sonnet 5"},
+    {"id": "claude-opus-5", "name": "Opus 5"},
 ]
+
+MODELS_CACHE_TTL = 3600  # seconds
 
 
 class ClaudeClient:
+    # Class-level defaults so instances built via __new__ (tests) work too.
+    _models_cache: list[dict[str, str]] | None = None
+    _models_cache_at: float = 0.0
+
     def __init__(
         self,
         api_key: str,
@@ -110,10 +120,39 @@ class ClaudeClient:
         self._client = AsyncAnthropic(api_key=api_key)
         self._default_model = model
         self._tools = tools
+        self._models_cache: list[dict[str, str]] | None = None
+        self._models_cache_at: float = 0.0
 
     @property
     def default_model(self) -> str:
         return self._default_model
+
+    async def list_models(self) -> list[dict[str, str]]:
+        """Fetch the live model list from the Anthropic Models API.
+
+        Cached for an hour; falls back to the static AVAILABLE_MODELS list
+        when the API is unreachable (or the fake client in tests has no
+        models endpoint). Newest models come first — the API already
+        returns them sorted by release date, descending.
+        """
+        now = time.time()
+        if self._models_cache and now - self._models_cache_at < MODELS_CACHE_TTL:
+            return self._models_cache
+        try:
+            page = await self._client.models.list(limit=100)
+            models = [
+                {"id": m.id, "name": m.display_name}
+                for m in page.data
+                if m.id.startswith("claude")
+            ]
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Models API unavailable, using static list: %s", err)
+            return AVAILABLE_MODELS
+        if not models:
+            return AVAILABLE_MODELS
+        self._models_cache = models
+        self._models_cache_at = now
+        return models
 
     async def summarize_title(self, user_text: str) -> str:
         """Quick non-streaming call to title a chat session."""

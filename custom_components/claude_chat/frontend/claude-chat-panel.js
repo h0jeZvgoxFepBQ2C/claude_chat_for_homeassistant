@@ -32,7 +32,8 @@ const STYLES = `
     background: rgba(0, 0, 0, 0.5);
     z-index: 1;
   }
-  .menu-toggle {
+  .menu-toggle,
+  .ha-menu-btn {
     display: none;
     background: transparent;
     border: none;
@@ -42,6 +43,7 @@ const STYLES = `
     font-size: 22px;
     line-height: 1;
   }
+  .ha-menu-btn svg { width: 24px; height: 24px; display: block; fill: currentColor; }
   .sidebar header {
     padding: 12px 16px;
     border-bottom: 1px solid var(--divider-color);
@@ -500,7 +502,7 @@ const STYLES = `
   /* ===== Mobile / narrow viewport ===== */
   @media (max-width: 720px) {
     :host { position: relative; overflow: hidden; }
-    .menu-toggle { display: inline-block; }
+    .menu-toggle, .ha-menu-btn { display: inline-block; }
     .sidebar {
       position: absolute;
       top: 0; bottom: 0; left: 0;
@@ -596,8 +598,14 @@ class ClaudeChatPanel extends HTMLElement {
     try {
       const res = await this._send("claude_chat/list_models");
       this._models = res.models || [];
+      const saved = localStorage.getItem("claude_chat:model");
+      // The list is now fetched live from the Models API — a previously
+      // saved id may no longer exist. Fall back to the configured default.
+      const valid = (id) => id && this._models.some((m) => m.id === id);
       this._selectedModel =
-        localStorage.getItem("claude_chat:model") || res.default || this._models[0]?.id;
+        (valid(saved) && saved) ||
+        (valid(res.default) && res.default) ||
+        res.default || this._models[0]?.id;
       this._renderHeader();
     } catch (err) {
       console.warn("Could not load models", err);
@@ -927,7 +935,10 @@ class ClaudeChatPanel extends HTMLElement {
       </aside>
       <section class="main">
         <div class="chat-header">
-          <button class="menu-toggle" aria-label="Toggle sessions">☰</button>
+          <button class="ha-menu-btn" aria-label="Open Home Assistant menu">
+            <svg viewBox="0 0 24 24"><path d="M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16"/></svg>
+          </button>
+          <button class="menu-toggle" aria-label="Toggle sessions">💬</button>
           <h1 id="chat-title">Claude Chat</h1>
           <select class="model-picker" id="model-picker"></select>
         </div>
@@ -973,6 +984,14 @@ class ClaudeChatPanel extends HTMLElement {
     this.shadowRoot.querySelector(".menu-toggle").addEventListener("click", () =>
       this._toggleSidebar()
     );
+    // Opens HA's own navigation drawer — the same event ha-menu-button
+    // fires. Without this, mobile users are stranded in the panel (the HA
+    // sidebar is hidden and only reachable via the browser back button).
+    this.shadowRoot.querySelector(".ha-menu-btn").addEventListener("click", () => {
+      this.dispatchEvent(
+        new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true })
+      );
+    });
 
     // Stick-to-bottom: scrolling programmatically or staying near the end
     // keeps the flag set; scrolling up to read clears it. The ResizeObserver

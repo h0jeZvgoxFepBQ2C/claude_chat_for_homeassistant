@@ -184,3 +184,40 @@ async def test_max_tokens_truncated_mid_tool_use(hass):
     content_types = [b["type"] for b in new_messages[0].content]
     assert "text" in content_types
     assert "tool_use" not in content_types
+
+
+async def test_list_models_falls_back_without_models_api(hass):
+    """FakeAsyncAnthropic has no .models — the static list is returned."""
+    from custom_components.claude_chat.claude_client import AVAILABLE_MODELS
+
+    client = ClaudeClient.__new__(ClaudeClient)
+    client._client = FakeAsyncAnthropic()
+    assert await client.list_models() == AVAILABLE_MODELS
+
+
+async def test_list_models_uses_models_api_and_caches(hass):
+    from types import SimpleNamespace
+
+    calls = []
+
+    class FakeModels:
+        async def list(self, limit=100):
+            calls.append(limit)
+            return SimpleNamespace(
+                data=[
+                    SimpleNamespace(id="claude-shiny-6", display_name="Shiny 6"),
+                    SimpleNamespace(id="claude-opus-5", display_name="Claude Opus 5"),
+                    SimpleNamespace(id="not-a-claude", display_name="Other"),
+                ]
+            )
+
+    client = ClaudeClient.__new__(ClaudeClient)
+    client._client = SimpleNamespace(models=FakeModels())
+    models = await client.list_models()
+    assert models == [
+        {"id": "claude-shiny-6", "name": "Shiny 6"},
+        {"id": "claude-opus-5", "name": "Claude Opus 5"},
+    ]
+    # Second call is served from the cache.
+    await client.list_models()
+    assert len(calls) == 1

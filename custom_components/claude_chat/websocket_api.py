@@ -22,7 +22,7 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
-from .claude_client import AVAILABLE_MODELS, ClaudeClient
+from .claude_client import ClaudeClient
 from .const import DOMAIN
 from .media import delete_session_media, save_image
 from .storage import Message, SessionStore
@@ -269,9 +269,13 @@ async def ws_list_models(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
 ) -> None:
     runtime = _runtime(hass)
-    default = runtime["client"].default_model if runtime else None
+    if not runtime:
+        connection.send_result(msg["id"], {"models": [], "default": None})
+        return
+    client: ClaudeClient = runtime["client"]
+    models = await client.list_models()
     connection.send_result(
-        msg["id"], {"models": AVAILABLE_MODELS, "default": default}
+        msg["id"], {"models": models, "default": client.default_model}
     )
 
 
