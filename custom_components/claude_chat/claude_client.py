@@ -242,6 +242,10 @@ class ClaudeClient:
                                     "name": block.name,
                                 }
                             )
+                        elif block.type == "thinking":
+                            current_block = {"type": "thinking", "thinking": "", "signature": ""}
+                        elif block.type == "redacted_thinking":
+                            current_block = {"type": "redacted_thinking", "data": block.data}
                         else:
                             current_block = {"type": block.type}
 
@@ -252,7 +256,10 @@ class ClaudeClient:
                             await emit({"type": "text_delta", "text": delta.text})
                         elif delta.type == "input_json_delta" and current_block:
                             tool_input_buffer += delta.partial_json
-
+                        elif delta.type == "thinking_delta" and current_block:
+                            current_block["thinking"] += delta.thinking
+                        elif delta.type == "signature_delta" and current_block:
+                            current_block["signature"] += delta.signature
                     elif etype == "content_block_stop":
                         if current_block is not None:
                             if current_block["type"] == "tool_use":
@@ -378,6 +385,16 @@ def _to_api_messages(history: list[Message], hass, session_id: str) -> list[dict
         content = m.content
         if any(b.get("type") == "image_ref" for b in content):
             content = to_api_content(hass, session_id, content)
+        # Drop malformed thinking blocks saved by older versions.
+        content = [
+            b for b in content
+            if not (
+                    b.get("type") == "thinking"
+                    and (not b.get("thinking") or not b.get("signature"))
+            )
+        ]
+        if not content:
+            continue
         out.append({"role": m.role, "content": content})
 
     # Build tool_use_id → tool_name map from all assistant messages.
