@@ -1,6 +1,6 @@
 .PHONY: setup test test-watch lint format ha-up ha-down ha-restart ha-logs ha-shell ha-clean help
 
-PY ?= python3
+PY ?= python3.14
 VENV := .venv
 PIP := $(VENV)/bin/pip
 PYTEST := $(VENV)/bin/pytest

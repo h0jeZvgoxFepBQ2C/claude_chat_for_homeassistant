@@ -92,3 +92,50 @@ async def test_get_trace_missing(setup, hass):
         sid,
     )
     assert "error" in result
+
+
+async def test_list_repairs_resolves_translations(setup, hass, monkeypatch):
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.claude_chat import tools as tools_mod
+
+    tools, _, sid = setup
+    ir.async_create_issue(
+        hass,
+        "spook",
+        "automation_unknown_entities_x",
+        is_fixable=True,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="automation_unknown_entities",
+        translation_placeholders={"automation": "Notify", "entities": "- light.gone"},
+    )
+    ir.async_create_issue(
+        hass, "other", "ignored_one", is_fixable=False,
+        severity=ir.IssueSeverity.ERROR, translation_key="foo",
+    )
+    ir.async_ignore_issue(hass, "other", "ignored_one", True)
+
+    async def fake_translations(hass_, language, category, integrations=None):
+        assert category == "issues"
+        return {
+            "component.spook.issues.automation_unknown_entities.title":
+                "Unknown entities in: {automation}",
+            "component.spook.issues.automation_unknown_entities.description":
+                "Missing:\n{entities}",
+        }
+
+    monkeypatch.setattr(tools_mod, "async_get_translations", fake_translations)
+
+    result = await tools.call("list_repairs", {}, sid)
+    assert result["count"] == 1
+    r = result["repairs"][0]
+    assert r["domain"] == "spook"
+    assert r["title"] == "Unknown entities in: Notify"
+    assert r["description"] == "Missing:\n- light.gone"
+    assert r["severity"] == "warning"
+
+    result = await tools.call("list_repairs", {"include_ignored": True}, sid)
+    assert result["count"] == 2
+    result = await tools.call("list_repairs", {"domain": "other", "include_ignored": True}, sid)
+    assert [r["issue_id"] for r in result["repairs"]] == ["ignored_one"]
+    assert result["repairs"][0]["title"] == "foo"

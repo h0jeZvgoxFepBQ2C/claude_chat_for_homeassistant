@@ -177,3 +177,37 @@ async def test_second_propose_supersedes_first_for_same_helper(setup, hass):
     ]
     assert len(pending) == 1
     assert pending[0].summary == "second"
+
+
+@pytest.mark.parametrize(
+    ("domain", "config", "expected_state"),
+    [
+        ("counter", {"name": "Door Openings", "initial": 3, "step": 1}, "3"),
+        ("timer", {"name": "Laundry", "duration": "00:45:00"}, "idle"),
+        (
+            "schedule",
+            {
+                "name": "Heating Plan",
+                "monday": [{"from": "06:00:00", "to": "08:00:00"}],
+                "saturday": [{"from": "08:00:00", "to": "24:00:00"}],
+            },
+            None,
+        ),
+    ],
+)
+# A schedule arms a timer for its next on/off transition.
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_create_counter_timer_schedule(setup, hass, domain, config, expected_state):
+    tools, store, sid = setup
+    assert await async_setup_component(hass, domain, {})
+    entity_id = await _create_helper(tools, store, sid, domain, config)
+    await hass.async_block_till_done()
+    assert entity_id.startswith(f"{domain}.")
+    state = hass.states.get(entity_id)
+    assert state is not None
+    if expected_state is not None:
+        assert state.state == expected_state
+
+    # Round-trip through get_helper so updates can start from stored config.
+    result = await tools.call("get_helper", {"entity_id": entity_id}, sid)
+    assert result["config"]["name"] == config["name"]

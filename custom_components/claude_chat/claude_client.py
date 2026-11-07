@@ -52,8 +52,8 @@ Rules:
   Use list_entities(domain="script") to discover scripts and get_script to \
   read the full config before propose_script_update. Configs look like \
   {"alias": "...", "sequence": [{"service": "..."}], "mode": "single"}.
-- For input helpers (input_boolean, input_number, input_text, input_select, \
-  input_datetime, input_button): use propose_helper_create / _update / \
+- For helpers (input_boolean, input_number, input_text, input_select, \
+  input_datetime, input_button, counter, timer, schedule): use propose_helper_create / _update / \
   _delete. Updates replace the FULL config — call get_helper first and \
   include every field you want to keep. Only UI-managed helpers can be \
   edited; YAML-defined ones can't.
@@ -68,7 +68,10 @@ Rules:
   (success/failure, trigger, condition results). get_automation_trace shows \
   the full step-by-step for one run. get_state_history shows when an entity \
   changed state in the last N hours. When the user asks "why didn't X fire" \
-  or "what happened when Y", start with these.
+  or "what happened when Y", start with these. list_repairs shows the open \
+  Repairs issues (incl. Spook's unknown-entity/area/service findings) — use \
+  it when the user asks about repairs, warnings, or broken references, and \
+  then fix them via the normal propose_* tools.
 - When proposing a dashboard change, ALWAYS use propose_dashboard_view_update \
   (not propose_dashboard_update). Call get_dashboard(summary=true) to see \
   view paths, then get_dashboard_view to fetch the single view to modify, \

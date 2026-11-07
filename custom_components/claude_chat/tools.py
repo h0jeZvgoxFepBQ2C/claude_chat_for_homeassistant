@@ -22,14 +22,18 @@ from typing import Any
 import yaml as yaml_lib
 from homeassistant.components.lovelace.const import ConfigNotFound
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import area_registry as ar, entity_registry as er
-from homeassistant.util import dt as dt_util, slugify
+from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.translation import async_get_translations
+from homeassistant.util import dt as dt_util
+from homeassistant.util import slugify
 
 from .storage import PendingChange, SessionStore
 
 _LOGGER = logging.getLogger(__name__)
 
-# Input-helper domains manageable through their storage collections (the same
+# Helper domains manageable through their storage collections (the same
 # mechanism the HA "Helpers" UI uses).
 HELPER_DOMAINS = (
     "input_boolean",
@@ -38,6 +42,9 @@ HELPER_DOMAINS = (
     "input_select",
     "input_datetime",
     "input_button",
+    "counter",
+    "timer",
+    "schedule",
 )
 
 
@@ -210,6 +217,28 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "run_id": {"type": "string"},
             },
             "required": ["automation_id", "run_id"],
+        },
+    },
+    {
+        "name": "list_repairs",
+        "description": (
+            "List open Repairs issues (Settings → Repairs), including those "
+            "raised by Spook and other integrations: unknown entities/areas/"
+            "services referenced in automations, scripts, scenes, dashboards "
+            "and helpers, deprecations, config problems, etc. Each entry has "
+            "the resolved title and description (with the concrete offending "
+            "entity IDs etc.), severity, source domain and creation time. "
+            "Ignored issues are skipped unless include_ignored=true."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "description": "Only issues from this integration (e.g. 'spook')",
+                },
+                "include_ignored": {"type": "boolean", "default": False},
+            },
         },
     },
     {
@@ -439,7 +468,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "description": (
             "Fetch the stored config of a UI-managed input helper "
             "(input_boolean, input_number, input_text, input_select, "
-            "input_datetime, input_button) by entity_id. Use before "
+            "input_datetime, input_button, counter, timer, schedule) by entity_id. Use before "
             "propose_helper_update. Errors for YAML-defined helpers — those "
             "can't be edited here."
         ),
@@ -452,7 +481,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "propose_helper_create",
         "description": (
-            "Propose creating an input helper. Stages a pending change for "
+            "Propose creating a helper. Stages a pending change for "
             "user approval; on approve it's created via HA's storage "
             "collection (same as the Helpers UI) and takes effect "
             "immediately — no reload or restart needed. Fields per domain: "
@@ -464,7 +493,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "input_select: name, options (required, list of strings), "
             "initial, icon. "
             "input_datetime: name, has_date(bool), has_time(bool), initial, "
-            "icon. input_button: name, icon."
+            "icon. input_button: name, icon. "
+            "counter: name, initial(int), step(int), minimum, maximum, "
+            "restore(bool), icon. "
+            "timer: name, duration('HH:MM:SS'), restore(bool), icon. "
+            "schedule: name, icon, and per weekday key (monday … sunday) a "
+            "list of {from: 'HH:MM:SS', to: 'HH:MM:SS'} non-overlapping "
+            "time ranges when the schedule is on (to may be '24:00:00')."
         ),
         "input_schema": {
             "type": "object",
@@ -954,6 +989,58 @@ class ToolRegistry:
         data.pop("config", None)
         data.pop("blueprint_inputs", None)
         return {"trace": data}
+
+    async def _tool_list_repairs(
+        self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None
+    ) -> dict[str, Any]:
+        domain_filter = args.get("domain")
+        include_ignored = bool(args.get("include_ignored", False))
+        issues = [
+            i
+            for i in ir.async_get(self.hass).issues.values()
+            if i.active
+            and (include_ignored or i.dismissed_version is None)
+            and (not domain_filter or i.domain == domain_filter)
+        ]
+        domains = {i.domain for i in issues}
+        language = self.hass.config.language or "en"
+        translations = await async_get_translations(
+            self.hass, language, "issues", domains
+        )
+        if language != "en":
+            # Fall back to English for keys the user's language lacks.
+            english = await async_get_translations(self.hass, "en", "issues", domains)
+            translations = {**english, **translations}
+
+        def render(issue: ir.IssueEntry, part: str) -> str | None:
+            if not issue.translation_key:
+                return None
+            text = translations.get(
+                f"component.{issue.domain}.issues.{issue.translation_key}.{part}"
+            )
+            if text is None:
+                return None
+            for key, value in (issue.translation_placeholders or {}).items():
+                text = text.replace(f"{{{key}}}", str(value))
+            return text[:2000]
+
+        result = []
+        for i in sorted(issues, key=lambda i: i.created, reverse=True):
+            result.append(
+                {
+                    "domain": i.domain,
+                    "issue_id": i.issue_id,
+                    "title": render(i, "title") or i.translation_key or i.issue_id,
+                    "description": render(i, "description"),
+                    "severity": i.severity,
+                    "created": i.created.isoformat(),
+                    "ignored": i.dismissed_version is not None,
+                    "is_fixable": i.is_fixable,
+                    "learn_more_url": i.learn_more_url,
+                    "placeholders": i.translation_placeholders,
+                }
+            )
+        return {"count": len(result), "repairs": result}
 
     async def _tool_get_state_history(
         self, args: dict[str, Any], session_id: str, tool_use_id: str | None = None

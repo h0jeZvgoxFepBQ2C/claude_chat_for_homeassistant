@@ -36,7 +36,7 @@ A sidebar chat panel powered by Anthropic's Claude. Ask Claude to inspect your H
   - `list_entities`, `get_entity`, `list_areas`
   - `list_dashboards`, `get_dashboard`, `list_lovelace_resources`
   - `list_automations`, `get_automation`, `list_services`
-  - **Debugging**: `list_automation_traces`, `get_automation_trace`, `get_state_history` — ask *"why didn't my X automation fire yesterday"* and Claude pulls the trace, reads the conditions/triggers, and explains
+  - **Debugging**: `list_automation_traces`, `get_automation_trace`, `get_state_history`, `list_repairs` (Settings → Repairs, incl. Spook) — ask *"why didn't my X automation fire yesterday"* and Claude pulls the trace, reads the conditions/triggers, and explains
   - `propose_dashboard_update`, `propose_service_call`,
     `propose_automation_create`, `propose_automation_update`,
     `propose_automation_delete` — all **stage** changes for your approval
