@@ -22,8 +22,9 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
+from .claude_cli_client import ClaudeCliClient
 from .claude_client import ClaudeClient
-from .const import DOMAIN
+from .const import AUTH_TYPE_API_KEY, DOMAIN
 from .media import delete_session_media, save_image
 from .storage import Message, SessionStore
 from .tools import ToolRegistry, automations_include_configured
@@ -68,7 +69,7 @@ def _store(hass: HomeAssistant) -> SessionStore:
     return _runtime(hass)["store"]
 
 
-def _client(hass: HomeAssistant) -> ClaudeClient:
+def _client(hass: HomeAssistant) -> ClaudeClient | ClaudeCliClient:
     return _runtime(hass)["client"]
 
 
@@ -285,12 +286,16 @@ async def ws_diagnostics(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
 ) -> None:
     """Front-end uses this to render hint banners (e.g. missing config lines)."""
+    runtime = _runtime(hass)
     automation_supported = await hass.async_add_executor_job(
         automations_include_configured, hass
     )
     connection.send_result(
         msg["id"],
         {
+            "auth_type": runtime.get("auth_type", AUTH_TYPE_API_KEY)
+            if runtime
+            else None,
             "automation_create_supported": automation_supported,
             "automation_create_hint": (
                 None

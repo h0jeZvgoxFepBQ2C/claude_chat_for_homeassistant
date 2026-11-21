@@ -3,10 +3,20 @@ from __future__ import annotations
 
 DOMAIN = "claude_chat"
 
+CONF_AUTH_TYPE = "auth_type"
+AUTH_TYPE_API_KEY = "api_key"
+AUTH_TYPE_CLAUDE_ACCOUNT = "claude_account"
+AUTH_TYPE_OAUTH_TOKEN = "oauth_token"
+
 CONF_API_KEY = "api_key"
+CONF_OAUTH_TOKEN = "oauth_token"
+CONF_CLI_PATH = "cli_path"
+CONF_CLAUDE_CONFIG_DIR = "claude_config_dir"
 CONF_MODEL = "model"
 
-DEFAULT_MODEL = "claude-sonnet-5"
+CLI_DIR_NAME = "claude_chat_cli"
+
+DEFAULT_MODEL = "claude-sonnet-5-5"
 
 PANEL_URL_PATH = "claude-chat"
 PANEL_TITLE = "Claude Chat"

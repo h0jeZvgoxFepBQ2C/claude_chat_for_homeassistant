@@ -58,7 +58,12 @@ A sidebar chat panel powered by Anthropic's Claude. Ask Claude to inspect your H
 2. Install **Claude Chat**.
 3. Restart Home Assistant.
 4. Settings → Devices & Services → **Add Integration** → search "Claude Chat".
-5. Paste your Anthropic API key (get one at [console.anthropic.com](https://console.anthropic.com)).
+5. Choose how to authenticate:
+   - **Sign in with Claude account (Pro / Max / Team)** — uses the official Claude Code CLI (same approach as [T3 Code](https://github.com/pingdotgg/t3code/blob/main/docs/user/providers-claude.md)). Home Assistant automatically locates or downloads the verified native `claude` binary for your platform (including Alpine/musl on HAOS & Docker), opens a browser sign-in link, and saves your OAuth session in `<config>/claude_chat_cli/config`. No Anthropic API key required.
+   - **Claude setup token** — paste a long-lived OAuth token generated via `claude setup-token`.
+   - **Anthropic API key** — pay-as-you-go key from [console.anthropic.com](https://console.anthropic.com).
+
+You can switch authentication methods or re-sign in anytime via **Settings → Devices & Services → Claude Chat → ⋮ → Reconfigure**.
 
 ## Limitations / not yet supported
 

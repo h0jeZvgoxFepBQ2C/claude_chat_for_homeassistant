@@ -34,7 +34,7 @@ End-to-end screenshots via Playwright: `.venv/bin/python dev/scripts/screenshots
 `async_setup_entry` wires up the four singletons and stores them in `hass.data[DOMAIN]`:
 - `SessionStore` — HA `Store` helper persisting `Session`/`Message`/`PendingChange` to `.storage/claude_chat.sessions`.
 - `ToolRegistry` — dispatch table for Claude's tool calls; holds a reference to the store so `propose_*` can stage `PendingChange`s.
-- `ClaudeClient` — Anthropic SDK wrapper. Built in an executor because the SDK loads SSL certs at construction time (would block the event loop otherwise).
+- `ClaudeClient` (API key mode) or `ClaudeCliClient` (Claude account / setup-token mode) — both expose the same `default_model`, `list_models`, `summarize_title`, `stream_chat` interface. `ClaudeClient` wraps the Anthropic Python SDK (`AsyncAnthropic`, built in an executor because it loads SSL certs). `ClaudeCliClient` drives the official Claude Code CLI binary (`claude_cli.py` locates or auto-downloads the verified native binary, including Alpine/musl builds for HAOS/Docker) over its `stream-json` + `control_request` SDK protocol, exposing `ToolRegistry` as an in-process SDK MCP server (`--tools ""` disables all built-in coding tools).
 - Built-in panel registered with the cache-busted `module_url`.
 
 Websocket commands are global to the HA instance, registered exactly once (guarded by a `_ws_registered` flag) so reloading the entry doesn't re-register and crash.
