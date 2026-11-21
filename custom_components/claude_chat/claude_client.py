@@ -101,9 +101,9 @@ EventEmitter = Callable[[EventType], Awaitable[None]]
 # list_models() below, so new model releases show up without a new release
 # of this integration.
 AVAILABLE_MODELS = [
-    {"id": "claude-haiku-4-5", "name": "Haiku 4.5"},
-    {"id": "claude-sonnet-5", "name": "Sonnet 5"},
-    {"id": "claude-opus-5", "name": "Opus 5"},
+    {"id": "claude-sonnet-5-5", "name": "Sonnet 5.5"},
+    {"id": "claude-opus-5-5", "name": "Opus 5.5"},
+    {"id": "claude-haiku-5-5", "name": "Haiku 5.5"},
 ]
 
 MODELS_CACHE_TTL = 3600  # seconds

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -50,6 +50,7 @@ class Session:
     updated_at: float = field(default_factory=time.time)
     messages: list[Message] = field(default_factory=list)
     pending_changes: list[PendingChange] = field(default_factory=list)
+    cli_session_id: str | None = None
 
 
 class SessionStore:
@@ -74,6 +75,7 @@ class SessionStore:
                 pending_changes=[
                     PendingChange(**p) for p in raw.get("pending_changes", [])
                 ],
+                cli_session_id=raw.get("cli_session_id"),
             )
             self._sessions[session.id] = session
         self._loaded = True
@@ -89,6 +91,7 @@ class SessionStore:
                         "updated_at": s.updated_at,
                         "messages": [asdict(m) for m in s.messages],
                         "pending_changes": [asdict(p) for p in s.pending_changes],
+                        "cli_session_id": s.cli_session_id,
                     }
                     for s in self._sessions.values()
                 ]
@@ -134,6 +137,15 @@ class SessionStore:
         session = self.get_or_raise(session_id)
         session.title = title
         session.updated_at = time.time()
+        await self.async_save()
+
+    async def set_cli_session_id(
+        self, session_id: str, cli_session_id: str | None
+    ) -> None:
+        session = self.get_or_raise(session_id)
+        if session.cli_session_id == cli_session_id:
+            return
+        session.cli_session_id = cli_session_id
         await self.async_save()
 
     async def append_message(self, session_id: str, message: Message) -> None:

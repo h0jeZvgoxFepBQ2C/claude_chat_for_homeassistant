@@ -12,11 +12,25 @@ from homeassistant.components.frontend import (
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 
+from .claude_cli import (
+    ClaudeCliDownloadError,
+    async_ensure_cli_binary,
+    default_claude_config_dir,
+)
+from .claude_cli_client import ClaudeCliClient
 from .claude_client import ClaudeClient
 from .const import (
+    AUTH_TYPE_API_KEY,
+    AUTH_TYPE_CLAUDE_ACCOUNT,
+    AUTH_TYPE_OAUTH_TOKEN,
     CONF_API_KEY,
+    CONF_AUTH_TYPE,
+    CONF_CLAUDE_CONFIG_DIR,
+    CONF_CLI_PATH,
     CONF_MODEL,
+    CONF_OAUTH_TOKEN,
     DEFAULT_MODEL,
     DOMAIN,
     FRONTEND_SCRIPT,
@@ -37,22 +51,52 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Claude Chat from a config entry."""
-    api_key = entry.data[CONF_API_KEY]
+    auth_type = entry.data.get(CONF_AUTH_TYPE, AUTH_TYPE_API_KEY)
     model = entry.options.get(CONF_MODEL, DEFAULT_MODEL)
 
     store = SessionStore(hass)
     await store.async_load()
     tools = ToolRegistry(hass, store)
-    # Anthropic SDK loads SSL certs at construction time — must run in executor.
-    client = await hass.async_add_executor_job(
-        lambda: ClaudeClient(api_key=api_key, model=model, tools=tools)
-    )
+
+    client: ClaudeClient | ClaudeCliClient
+    if auth_type in (AUTH_TYPE_CLAUDE_ACCOUNT, AUTH_TYPE_OAUTH_TOKEN):
+        configured_cli = (
+            entry.options.get(CONF_CLI_PATH) or entry.data.get(CONF_CLI_PATH) or None
+        )
+        config_dir = (
+            entry.options.get(CONF_CLAUDE_CONFIG_DIR)
+            or entry.data.get(CONF_CLAUDE_CONFIG_DIR)
+            or str(default_claude_config_dir(hass))
+        )
+        try:
+            cli_path = await async_ensure_cli_binary(
+                hass, configured_path=configured_cli
+            )
+        except ClaudeCliDownloadError as err:
+            raise ConfigEntryNotReady(
+                f"Claude Code CLI is not ready: {err}"
+            ) from err
+
+        client = ClaudeCliClient(
+            cli_path=cli_path,
+            model=model,
+            tools=tools,
+            config_dir=config_dir,
+            oauth_token=entry.data.get(CONF_OAUTH_TOKEN),
+        )
+    else:
+        api_key = entry.data[CONF_API_KEY]
+        # Anthropic SDK loads SSL certs at construction time — must run in executor.
+        client = await hass.async_add_executor_job(
+            lambda: ClaudeClient(api_key=api_key, model=model, tools=tools)
+        )
 
     hass.data[DOMAIN] = {
         "store": store,
         "tools": tools,
         "client": client,
         "entry": entry,
+        "auth_type": auth_type,
     }
 
     # WebSocket commands are global; register once.

@@ -3,19 +3,71 @@
     "step": {
       "user": {
         "title": "Claude Chat",
+        "description": "Choose how to authenticate with Claude. You can sign in with your Claude Pro/Max/Team subscription (via Claude Code CLI, like T3 Code) or use a pay-as-you-go Anthropic API key.",
+        "menu_options": {
+          "claude_account": "Sign in with Claude account (Pro / Max / Team)",
+          "oauth_token": "Claude setup token (claude setup-token)",
+          "api_key": "Anthropic API key (console.anthropic.com)"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Claude Chat",
+        "description": "Switch authentication method or re-sign in to your Claude account.",
+        "menu_options": {
+          "claude_account": "Sign in with Claude account (Pro / Max / Team)",
+          "oauth_token": "Claude setup token (claude setup-token)",
+          "api_key": "Anthropic API key (console.anthropic.com)"
+        }
+      },
+      "claude_account": {
+        "title": "Sign in with Claude account",
+        "description": "Could not automatically locate or download the Claude Code CLI binary. Retry or specify the path to an existing `claude` binary and config directory.",
+        "data": {
+          "cli_path": "Claude CLI binary path (optional)",
+          "claude_config_dir": "Claude config directory (optional)"
+        }
+      },
+      "claude_account_confirm": {
+        "title": "Claude account already signed in",
+        "description": "Found an active Claude sign-in ({account}). Click Submit to use it, or check the box below to sign in with a different account.",
+        "data": {
+          "model": "Default model",
+          "fresh_login": "Sign in with a different Claude account"
+        }
+      },
+      "claude_account_code": {
+        "title": "Authorize Claude Chat",
+        "description": "1. Open this link in your browser and sign in to your Claude account:\n\n[Sign in to Claude]({auth_url})\n\n2. After authorizing, copy the verification code shown on the page and paste it below.",
+        "data": {
+          "auth_code": "Authorization code",
+          "model": "Default model"
+        }
+      },
+      "oauth_token": {
+        "title": "Claude setup token",
+        "description": "Run `claude setup-token` on any machine signed into your Claude subscription and paste the resulting OAuth token below.",
+        "data": {
+          "oauth_token": "Claude OAuth token",
+          "model": "Default model"
+        }
+      },
+      "api_key": {
+        "title": "Anthropic API key",
         "description": "Enter your Anthropic API key. Get one at console.anthropic.com.",
         "data": {
           "api_key": "API key",
-          "model": "Model"
+          "model": "Default model"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid API key",
-      "cannot_connect": "Could not reach the Anthropic API"
+      "invalid_auth": "Authentication failed — check your credentials or verification code and try again",
+      "cannot_connect": "Could not connect to Claude",
+      "cli_download_failed": "Could not download or run the Claude Code CLI binary on this host (check HA logs)"
     },
     "abort": {
-      "single_instance_allowed": "Claude Chat is already configured"
+      "single_instance_allowed": "Claude Chat is already configured",
+      "reconfigure_successful": "Authentication updated"
     }
   },
   "options": {
@@ -23,7 +75,9 @@
       "init": {
         "title": "Claude Chat options",
         "data": {
-          "model": "Model"
+          "model": "Default model",
+          "cli_path": "Claude CLI binary path (optional)",
+          "claude_config_dir": "Claude config directory (optional)"
         }
       }
     }
